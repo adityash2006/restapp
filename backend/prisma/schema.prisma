@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model MenuItem {
+  id        Int         @id @default(autoincrement())
+  name      String      @unique
+  price     Float
+  createdAt DateTime    @default(now())
+  recipes   Recipe[]
+  orderItems OrderItem[]
+}
+
+model TableOrder {
+  id          Int         @id @default(autoincrement())
+  tableNumber Int
+  status      OrderStatus @default(PENDING)
+  totalAmount Float       @default(0)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  items       OrderItem[]
+  printJobs   PrintJob[]
+}
+
+model OrderItem {
+  id         Int       @id @default(autoincrement())
+  quantity   Int
+  unitPrice  Float
+  subtotal   Float
+  orderId    Int
+  menuItemId Int
+  order      TableOrder @relation(fields: [orderId], references: [id])
+  menuItem   MenuItem   @relation(fields: [menuItemId], references: [id])
+}
+
+model Ingredient {
+  id            Int      @id @default(autoincrement())
+  name          String   @unique
+  stockQuantity Float
+  unit          String
+  recipes       Recipe[]
+}
+
+model Recipe {
+  id               Int        @id @default(autoincrement())
+  menuItemId       Int
+  ingredientId     Int
+  quantityRequired Float
+  menuItem         MenuItem   @relation(fields: [menuItemId], references: [id])
+  ingredient       Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@unique([menuItemId, ingredientId])
+}
+
+model PrintJob {
+  id          Int            @id @default(autoincrement())
+  orderId     Int
+  type        PrintJobType
+  status      PrintJobStatus @default(PENDING)
+  createdAt   DateTime       @default(now())
+  processedAt DateTime?
+  order       TableOrder     @relation(fields: [orderId], references: [id])
+}
+
+enum OrderStatus {
+  PENDING
+  DONE
+}
+
+enum PrintJobType {
+  KOT
+  BILL
+}
+
+enum PrintJobStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
