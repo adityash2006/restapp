@@ -1,6 +1,9 @@
-// Dynamically resolve backend URL from the browser's current hostname
-// so LAN devices (waiter phones) hit the PC's IP, not "localhost"
-const API_BASE = `http://${window.location.hostname}:3000/api`;
+// In production: frontend is served by Express on port 3000, so API is same origin
+// In dev: Vite runs on 5173/5174, backend on 3000 — need explicit port
+const isDev = window.location.port !== "3000" && window.location.port !== "";
+const API_BASE = isDev
+  ? `http://${window.location.hostname}:3000/api`
+  : `/api`;
 
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${url}`, {

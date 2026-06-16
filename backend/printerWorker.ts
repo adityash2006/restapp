@@ -2,6 +2,8 @@ import "dotenv/config";
 import { PrismaClient } from "./generated/prisma/client.ts";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
+import { ThermalPrinter } from "node-thermal-printer";
+import { printerConfig, restaurantInfo } from "./src/printerConfig";
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
@@ -26,58 +28,173 @@ interface PrintData {
   totalAmount?: number; // Only present in final BILL
 }
 
-function processKOT(data: PrintData) {
-  const lines: string[] = [];
+// ── Printer Instances ──────────────────────────────────────────
 
-  lines.push("==================");
-  lines.push("  🔥 KITCHEN ORDER");
-  lines.push(`  Table ${data.tableNumber}`);
-  lines.push(`  ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
-  lines.push("==================");
-
-  for (const item of data.items) {
-    lines.push(`  ${item.quantity} x ${item.name}`);
-  }
-
-  lines.push("==================");
-  lines.push("");
-
-  console.log(lines.join("\n"));
+function createPrinter(config: typeof printerConfig.counter): ThermalPrinter {
+  return new ThermalPrinter({
+    type: config.type,
+    interface: config.interface,
+    width: config.width,
+    options: config.options,
+  });
 }
 
-function processBILL(data: PrintData) {
-  const lines: string[] = [];
-  const isFinalBill = data.totalAmount !== undefined;
+// ── KOT: Kitchen Order Ticket ──────────────────────────────────
 
-  lines.push("==================");
-  if (isFinalBill) {
-    lines.push("     📋 FINAL BILL");
-  } else {
-    lines.push("     🖥️ COUNTER SLIP");
-  }
-  lines.push(`  Table ${data.tableNumber}`);
-  lines.push(`  ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
-  lines.push("==================");
+async function printKOT(data: PrintData): Promise<void> {
+  const printer = createPrinter(printerConfig.kitchen);
 
+  // Header
+  printer.alignCenter();
+  printer.bold(true);
+  printer.setTextSize(1, 1);
+  printer.println("KITCHEN ORDER");
+  printer.bold(false);
+  printer.setTextNormal();
+  printer.drawLine();
+
+  // Table number — big and bold
+  printer.alignCenter();
+  printer.bold(true);
+  printer.setTextSize(1, 1);
+  printer.println(`TABLE ${data.tableNumber}`);
+  printer.setTextNormal();
+  printer.bold(false);
+  printer.println(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }));
+  printer.drawLine();
+
+  // Items
+  printer.alignLeft();
+  printer.bold(true);
   for (const item of data.items) {
-    if (isFinalBill && item.subtotal !== undefined) {
-      lines.push(`  ${item.name} x ${item.quantity} = ₹${item.subtotal}`);
-    } else {
-      lines.push(`  ${item.quantity} x ${item.name}`);
-    }
+    printer.setTextSize(0, 1); // taller text for kitchen readability
+    printer.println(`${item.quantity} x ${item.name}`);
   }
+  printer.setTextNormal();
+  printer.bold(false);
+  printer.drawLine();
 
-  // Only final bill has total
-  if (isFinalBill) {
-    lines.push("------------------");
-    lines.push(`  TOTAL = ₹${data.totalAmount}`);
-  }
+  printer.newLine();
+  printer.newLine();
+  printer.cut();
 
-  lines.push("==================");
-  lines.push("");
+  await printer.execute();
 
-  console.log(lines.join("\n"));
+  // Also log to console for backup
+  console.log(`  [KOT] Table ${data.tableNumber}: ${data.items.map(i => `${i.quantity}x ${i.name}`).join(", ")}`);
 }
+
+// ── Counter Slip (items added, no total) ───────────────────────
+
+async function printCounterSlip(data: PrintData): Promise<void> {
+  const printer = createPrinter(printerConfig.counter);
+
+  // Header
+  printer.alignCenter();
+  printer.bold(true);
+  printer.println("ORDER SLIP");
+  printer.bold(false);
+  printer.drawLine();
+
+  printer.alignCenter();
+  printer.bold(true);
+  printer.setTextSize(0, 1);
+  printer.println(`TABLE ${data.tableNumber}`);
+  printer.setTextNormal();
+  printer.bold(false);
+  printer.println(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }));
+  printer.drawLine();
+
+  // Items
+  printer.alignLeft();
+  for (const item of data.items) {
+    printer.println(`${item.quantity} x ${item.name}`);
+  }
+  printer.drawLine();
+
+  printer.newLine();
+  printer.cut();
+
+  await printer.execute();
+
+  console.log(`  [COUNTER SLIP] Table ${data.tableNumber}: ${data.items.map(i => `${i.quantity}x ${i.name}`).join(", ")}`);
+}
+
+// ── Final Bill (all items + total) ─────────────────────────────
+
+async function printFinalBill(data: PrintData): Promise<void> {
+  const printer = createPrinter(printerConfig.counter);
+
+  // Restaurant header
+  printer.alignCenter();
+  printer.bold(true);
+  printer.setTextSize(1, 1);
+  printer.println(restaurantInfo.name);
+  printer.bold(false);
+  printer.setTextNormal();
+  if (restaurantInfo.tagline) printer.println(restaurantInfo.tagline);
+  printer.drawLine();
+
+  // Bill header
+  printer.alignCenter();
+  printer.bold(true);
+  printer.println("BILL");
+  printer.bold(false);
+  printer.setTextSize(0, 1);
+  printer.println(`TABLE ${data.tableNumber}`);
+  printer.setTextNormal();
+  printer.println(new Date().toLocaleString("en-IN", {
+    day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  }));
+  printer.drawLine();
+
+  // Column headers
+  printer.alignLeft();
+  printer.bold(true);
+  printer.tableCustom([
+    { text: "ITEM", align: "LEFT", width: 0.5 },
+    { text: "QTY", align: "CENTER", width: 0.15 },
+    { text: "RATE", align: "RIGHT", width: 0.15 },
+    { text: "AMT", align: "RIGHT", width: 0.2 },
+  ]);
+  printer.bold(false);
+  printer.drawLine();
+
+  // Items
+  for (const item of data.items) {
+    printer.tableCustom([
+      { text: item.name, align: "LEFT", width: 0.5 },
+      { text: String(item.quantity), align: "CENTER", width: 0.15 },
+      { text: `${item.unitPrice ?? ""}`, align: "RIGHT", width: 0.15 },
+      { text: `${item.subtotal ?? ""}`, align: "RIGHT", width: 0.2 },
+    ]);
+  }
+
+  printer.drawLine();
+
+  // Total
+  printer.alignRight();
+  printer.bold(true);
+  printer.setTextSize(1, 1);
+  printer.println(`TOTAL: Rs.${data.totalAmount}`);
+  printer.setTextNormal();
+  printer.bold(false);
+  printer.drawLine();
+
+  // Footer
+  printer.alignCenter();
+  printer.println("Thank you! Visit again.");
+  printer.newLine();
+  printer.newLine();
+  printer.cut();
+
+  await printer.execute();
+
+  console.log(`  [FINAL BILL] Table ${data.tableNumber}: Rs.${data.totalAmount}`);
+}
+
+// ── Poll & Process ─────────────────────────────────────────────
 
 async function pollPrintJobs() {
   try {
@@ -88,14 +205,14 @@ async function pollPrintJobs() {
 
     if (pendingJobs.length === 0) return;
 
-    console.log(`\n🖨️  Processing ${pendingJobs.length} print job(s)...\n`);
+    console.log(`\n🖨️  Processing ${pendingJobs.length} print job(s)...`);
 
     for (const job of pendingJobs) {
       try {
-        const data = job.data as any;
+        const data = job.data as any as PrintData | null;
 
         if (!data) {
-          console.warn(`⚠️  Print job #${job.id} has no data, skipping`);
+          console.warn(`  ⚠️  Job #${job.id} has no data, skipping`);
           await prisma.printJob.update({
             where: { id: job.id },
             data: { status: "FAILED", processedAt: new Date() },
@@ -104,9 +221,13 @@ async function pollPrintJobs() {
         }
 
         if (job.type === "KOT") {
-          processKOT(data as PrintData);
+          await printKOT(data);
         } else if (job.type === "BILL") {
-          processBILL(data as PrintData);
+          if (data.totalAmount !== undefined) {
+            await printFinalBill(data);
+          } else {
+            await printCounterSlip(data);
+          }
         }
 
         // Mark as completed
@@ -118,14 +239,12 @@ async function pollPrintJobs() {
           },
         });
 
-        const label = job.type === "BILL" && (data as PrintData).totalAmount !== undefined
-          ? "FINAL BILL"
-          : job.type === "BILL"
-          ? "COUNTER SLIP"
-          : "KOT";
-        console.log(`✅ Print job #${job.id} (${label}) completed`);
-      } catch (error) {
-        console.error(`❌ Print job #${job.id} failed:`, error);
+        const label = job.type === "KOT" ? "KOT"
+          : data.totalAmount !== undefined ? "FINAL BILL"
+          : "COUNTER SLIP";
+        console.log(`  ✅ Job #${job.id} (${label}) completed`);
+      } catch (error: any) {
+        console.error(`  ❌ Job #${job.id} failed: ${error.message}`);
 
         await prisma.printJob.update({
           where: { id: job.id },
@@ -141,9 +260,15 @@ async function pollPrintJobs() {
   }
 }
 
+// ── Main ───────────────────────────────────────────────────────
+
 async function main() {
-  console.log("🖨️  Kesari Printer Worker started");
-  console.log(`   Polling every ${POLL_INTERVAL / 1000}s for pending print jobs...\n`);
+  console.log("╔══════════════════════════════════════╗");
+  console.log("║   🖨️  Kesari Printer Worker           ║");
+  console.log("╚══════════════════════════════════════╝");
+  console.log(`  Kitchen: ${printerConfig.kitchen.interface}`);
+  console.log(`  Counter: ${printerConfig.counter.interface}`);
+  console.log(`  Polling every ${POLL_INTERVAL / 1000}s...\n`);
 
   // Poll indefinitely
   setInterval(pollPrintJobs, POLL_INTERVAL);
