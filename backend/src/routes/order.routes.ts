@@ -3,7 +3,7 @@ import {
   getActiveOrders,
   getOrderById,
   createOrder,
-  addItemToOrder,
+  addItemsToOrder,
   updateOrderStatus,
   getTodaySummary,
 } from "../services/order.service";
@@ -65,13 +65,15 @@ router.post("/", async (req, res) => {
 
     const order = await createOrder(tableNumber);
     res.status(201).json(order);
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error creating order:", error);
-    res.status(500).json({ error: "Failed to create order" });
+    const message = error.message || "Failed to create order";
+    const status = message.includes("already has") ? 409 : 500;
+    res.status(status).json({ error: message });
   }
 });
 
-// POST /api/orders/:id/items
+// POST /api/orders/:id/items — accepts batch: { items: [{ menuItemId, quantity }, ...] }
 router.post("/:id/items", async (req, res) => {
   try {
     const orderId = parseInt(req.params.id);
@@ -80,17 +82,34 @@ router.post("/:id/items", async (req, res) => {
       return;
     }
 
-    const { menuItemId, quantity } = req.body;
-    if (!menuItemId || !quantity) {
-      res.status(400).json({ error: "menuItemId and quantity are required" });
+    let items: { menuItemId: number; quantity: number }[] = [];
+
+    // Support both batch and legacy single-item format
+    if (req.body.items && Array.isArray(req.body.items)) {
+      items = req.body.items;
+    } else if (req.body.menuItemId && req.body.quantity) {
+      // Legacy single-item format
+      items = [{ menuItemId: req.body.menuItemId, quantity: req.body.quantity }];
+    }
+
+    if (items.length === 0) {
+      res.status(400).json({ error: "At least one item is required" });
       return;
     }
 
-    const result = await addItemToOrder(orderId, menuItemId, quantity);
+    // Validate each item
+    for (const item of items) {
+      if (!item.menuItemId || !item.quantity || item.quantity < 1) {
+        res.status(400).json({ error: "Each item must have a valid menuItemId and quantity >= 1" });
+        return;
+      }
+    }
+
+    const result = await addItemsToOrder(orderId, items);
     res.status(201).json(result);
   } catch (error: any) {
-    console.error("Error adding item:", error);
-    const message = error.message || "Failed to add item to order";
+    console.error("Error adding items:", error);
+    const message = error.message || "Failed to add items to order";
     const status = message.includes("not found") || message.includes("not active") ? 400 : 500;
     res.status(status).json({ error: message });
   }

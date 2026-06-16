@@ -20,6 +20,14 @@ function Toast({ message, type, onClose }: { message: string; type: "success" | 
   return <div className={`toast ${type === "success" ? "toast-success" : "toast-error"}`}>{message}</div>;
 }
 
+// A pending ingredient link (not yet saved)
+interface PendingLink {
+  ingredientId: number;
+  ingredientName: string;
+  ingredientUnit: string;
+  quantity: string;
+}
+
 export default function RecipesPage() {
   const [menuItems, setMenuItems] = useState<MenuItemWithRecipes[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
@@ -27,17 +35,22 @@ export default function RecipesPage() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
-  // Add recipe form
+  // Add recipe modal
   const [showAdd, setShowAdd] = useState(false);
   const [selMenuItem, setSelMenuItem] = useState<number | "">("");
-  const [selIngredient, setSelIngredient] = useState<number | "">("");
-  const [selQty, setSelQty] = useState("");
-  const [adding, setAdding] = useState(false);
+  const [pendingLinks, setPendingLinks] = useState<PendingLink[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  // Inline add to existing card
+  const [inlineAddFor, setInlineAddFor] = useState<number | null>(null); // menuItem id
+  const [inlineIngId, setInlineIngId] = useState<number | "">("");
+  const [inlineQty, setInlineQty] = useState("");
+  const [inlineSaving, setInlineSaving] = useState(false);
 
   // Edit state
   const [editId, setEditId] = useState<number | null>(null);
   const [editQty, setEditQty] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -67,29 +80,100 @@ export default function RecipesPage() {
     (mi) => !recipes.some((r) => r.menuItemId === mi.id)
   );
 
-  const handleAdd = async () => {
-    if (!selMenuItem || !selIngredient) { setToast({ message: "Select a menu item and ingredient", type: "error" }); return; }
-    const qty = parseFloat(selQty);
-    if (isNaN(qty) || qty <= 0) { setToast({ message: "Enter a valid quantity", type: "error" }); return; }
+  // --- Multi-ingredient add modal ---
 
-    setAdding(true);
+  // Get ingredients not already linked (for the selected menu item) and not already in pending
+  const getAvailableIngredients = (menuItemId: number | "") => {
+    if (!menuItemId) return ingredients;
+    const linkedIds = recipes
+      .filter((r) => r.menuItemId === Number(menuItemId))
+      .map((r) => r.ingredientId);
+    const pendingIds = pendingLinks.map((p) => p.ingredientId);
+    return ingredients.filter(
+      (ing) => !linkedIds.includes(ing.id) && !pendingIds.includes(ing.id)
+    );
+  };
+
+  const addPendingLink = (ingredientId: number) => {
+    const ing = ingredients.find((i) => i.id === ingredientId);
+    if (!ing) return;
+    setPendingLinks((prev) => [
+      ...prev,
+      { ingredientId: ing.id, ingredientName: ing.name, ingredientUnit: ing.unit, quantity: "" },
+    ]);
+  };
+
+  const updatePendingQty = (ingredientId: number, qty: string) => {
+    setPendingLinks((prev) =>
+      prev.map((p) => (p.ingredientId === ingredientId ? { ...p, quantity: qty } : p))
+    );
+  };
+
+  const removePendingLink = (ingredientId: number) => {
+    setPendingLinks((prev) => prev.filter((p) => p.ingredientId !== ingredientId));
+  };
+
+  const handleSaveAll = async () => {
+    if (!selMenuItem) { setToast({ message: "Select a menu item", type: "error" }); return; }
+    if (pendingLinks.length === 0) { setToast({ message: "Add at least one ingredient", type: "error" }); return; }
+
+    // Validate all quantities
+    for (const link of pendingLinks) {
+      const qty = parseFloat(link.quantity);
+      if (isNaN(qty) || qty <= 0) {
+        setToast({ message: `Enter a valid quantity for ${link.ingredientName}`, type: "error" });
+        return;
+      }
+    }
+
+    setSaving(true);
     try {
-      await createRecipe(Number(selMenuItem), Number(selIngredient), qty);
-      const ing = ingredients.find(i => i.id === Number(selIngredient));
-      setToast({ message: `Recipe link added!`, type: "success" });
-      setSelMenuItem(""); setSelIngredient(""); setSelQty(""); setShowAdd(false);
+      // Save each recipe link one by one
+      for (const link of pendingLinks) {
+        await createRecipe(Number(selMenuItem), link.ingredientId, parseFloat(link.quantity));
+      }
+      setToast({ message: `${pendingLinks.length} ingredient${pendingLinks.length !== 1 ? "s" : ""} linked!`, type: "success" });
+      setShowAdd(false);
+      setSelMenuItem("");
+      setPendingLinks([]);
       fetchAll();
     } catch (err: any) {
       setToast({ message: err.message, type: "error" });
-    } finally { setAdding(false); }
+    } finally { setSaving(false); }
   };
 
+  const closeAddModal = () => {
+    setShowAdd(false);
+    setSelMenuItem("");
+    setPendingLinks([]);
+  };
+
+  // --- Inline add ingredient to existing card ---
+  const handleInlineAdd = async (menuItemId: number) => {
+    if (!inlineIngId) { setToast({ message: "Select an ingredient", type: "error" }); return; }
+    const qty = parseFloat(inlineQty);
+    if (isNaN(qty) || qty <= 0) { setToast({ message: "Enter valid quantity", type: "error" }); return; }
+
+    setInlineSaving(true);
+    try {
+      await createRecipe(menuItemId, Number(inlineIngId), qty);
+      setToast({ message: "Ingredient added!", type: "success" });
+      setInlineAddFor(null);
+      setInlineIngId("");
+      setInlineQty("");
+      fetchAll();
+    } catch (err: any) {
+      setToast({ message: err.message, type: "error" });
+    } finally { setInlineSaving(false); }
+  };
+
+  // --- Edit existing recipe ---
   const handleUpdate = async () => {
     if (editId === null) return;
     const qty = parseFloat(editQty);
     if (isNaN(qty) || qty <= 0) { setToast({ message: "Enter valid quantity", type: "error" }); return; }
 
-    setSaving(true);
+    setEditSaving(true);
     try {
       await updateRecipe(editId, qty);
       setToast({ message: "Recipe updated!", type: "success" });
@@ -97,7 +181,7 @@ export default function RecipesPage() {
       fetchAll();
     } catch (err: any) {
       setToast({ message: err.message, type: "error" });
-    } finally { setSaving(false); }
+    } finally { setEditSaving(false); }
   };
 
   const handleDelete = async (id: number, menuName: string, ingName: string) => {
@@ -109,6 +193,14 @@ export default function RecipesPage() {
     } catch (err: any) {
       setToast({ message: err.message, type: "error" });
     }
+  };
+
+  // Available ingredients for inline add (not already linked to this menu item)
+  const getInlineAvailable = (menuItemId: number) => {
+    const linkedIds = recipes
+      .filter((r) => r.menuItemId === menuItemId)
+      .map((r) => r.ingredientId);
+    return ingredients.filter((ing) => !linkedIds.includes(ing.id));
   };
 
   return (
@@ -144,18 +236,31 @@ export default function RecipesPage() {
                     <div className="font-bold text-lg">{menuItem.name}</div>
                     <div className="text-sm text-[var(--color-accent)]">₹{menuItem.price}</div>
                   </div>
-                  <span className="counter-badge">{itemRecipes.length}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="counter-badge">{itemRecipes.length}</span>
+                    <button
+                      className="btn btn-ghost text-xs"
+                      style={{ padding: "4px 10px", minHeight: "auto" }}
+                      onClick={() => {
+                        setInlineAddFor(inlineAddFor === menuItem.id ? null : menuItem.id);
+                        setInlineIngId("");
+                        setInlineQty("");
+                      }}
+                    >
+                      {inlineAddFor === menuItem.id ? "✕" : "+ Add"}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="border-t border-[var(--color-border)] pt-3">
                   {itemRecipes.map((recipe) => (
                     <div key={recipe.id} className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-b-0">
                       {editId === recipe.id ? (
-                        <div className="flex items-center gap-2 flex-1">
+                        <div className="flex items-center gap-2 flex-1 flex-wrap">
                           <span className="text-sm font-medium">{recipe.ingredient.name}:</span>
                           <input className="input text-sm" type="number" value={editQty} onChange={e => setEditQty(e.target.value)} style={{ width: 80 }} step="0.01" />
                           <span className="text-xs text-[var(--color-text-muted)]">{recipe.ingredient.unit}</span>
-                          <button className="btn btn-primary text-xs" style={{ padding: "4px 12px", minHeight: "auto" }} onClick={handleUpdate} disabled={saving}>{saving ? "..." : "Save"}</button>
+                          <button className="btn btn-primary text-xs" style={{ padding: "4px 12px", minHeight: "auto" }} onClick={handleUpdate} disabled={editSaving}>{editSaving ? "..." : "Save"}</button>
                           <button className="btn btn-ghost text-xs" style={{ padding: "4px 8px", minHeight: "auto" }} onClick={() => setEditId(null)}>✕</button>
                         </div>
                       ) : (
@@ -173,6 +278,48 @@ export default function RecipesPage() {
                       )}
                     </div>
                   ))}
+
+                  {/* Inline add ingredient row */}
+                  {inlineAddFor === menuItem.id && (
+                    <div className="mt-3 pt-3 border-t border-dashed border-[var(--color-border)]">
+                      <div className="text-xs font-semibold text-[var(--color-text-muted)] mb-2 uppercase">Add ingredient to {menuItem.name}</div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <select
+                          className="input text-sm flex-1"
+                          value={inlineIngId}
+                          onChange={e => setInlineIngId(e.target.value ? Number(e.target.value) : "")}
+                          style={{ minWidth: 140 }}
+                        >
+                          <option value="">Select ingredient...</option>
+                          {getInlineAvailable(menuItem.id).map(ing => (
+                            <option key={ing.id} value={ing.id}>{ing.name} ({ing.unit})</option>
+                          ))}
+                        </select>
+                        <input
+                          className="input text-sm"
+                          type="number"
+                          value={inlineQty}
+                          onChange={e => setInlineQty(e.target.value)}
+                          placeholder="Qty"
+                          step="0.01"
+                          style={{ width: 80 }}
+                        />
+                        {inlineIngId && (
+                          <span className="text-xs text-[var(--color-text-muted)]">
+                            {ingredients.find(i => i.id === Number(inlineIngId))?.unit}
+                          </span>
+                        )}
+                        <button
+                          className="btn btn-primary text-xs"
+                          style={{ padding: "6px 14px", minHeight: "auto" }}
+                          onClick={() => handleInlineAdd(menuItem.id)}
+                          disabled={inlineSaving}
+                        >
+                          {inlineSaving ? "..." : "Add"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -185,11 +332,18 @@ export default function RecipesPage() {
                   <div className="font-bold text-[var(--color-warning)]">Items without recipes</div>
                 </div>
                 <p className="text-sm text-[var(--color-text-muted)] mb-3">
-                  These menu items won't deduct inventory when ordered. Add recipe links using the + button.
+                  These menu items won't deduct inventory when ordered. Click on one to set up its recipe.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {noRecipeItems.map((item) => (
-                    <span key={item.id} className="badge badge-pending">{item.name}</span>
+                    <button
+                      key={item.id}
+                      className="badge badge-pending"
+                      style={{ cursor: "pointer", border: "1px solid var(--color-border)" }}
+                      onClick={() => { setShowAdd(true); setSelMenuItem(item.id); setPendingLinks([]); }}
+                    >
+                      + {item.name}
+                    </button>
                   ))}
                 </div>
               </div>
@@ -207,62 +361,141 @@ export default function RecipesPage() {
       </div>
 
       {/* Add Recipe FAB */}
-      <button className="fab animate-pulse-glow" onClick={() => setShowAdd(true)} id="add-recipe-fab" aria-label="Add Recipe">+</button>
+      <button className="fab animate-pulse-glow" onClick={() => { setShowAdd(true); setSelMenuItem(""); setPendingLinks([]); }} id="add-recipe-fab" aria-label="Add Recipe">+</button>
 
-      {/* Add Recipe Modal */}
+      {/* Add Recipe Modal — Multi-ingredient */}
       {showAdd && (
-        <div className="modal-overlay" onClick={() => setShowAdd(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h2 className="text-xl font-bold mb-4">Add Recipe Link</h2>
+        <div className="modal-overlay" onClick={closeAddModal}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxHeight: "90vh", overflow: "auto" }}>
+            <h2 className="text-xl font-bold mb-2">Set Up Recipe</h2>
             <p className="text-sm text-[var(--color-text-muted)] mb-4">
-              Specify how much of an ingredient is used when 1 serving of a menu item is ordered.
+              Select a menu item, then add all the ingredients it uses with quantities per serving.
             </p>
-            <div className="flex flex-col gap-3">
-              <div>
-                <label className="block text-sm text-[var(--color-text-muted)] mb-1">Menu Item</label>
-                <select className="input" value={selMenuItem} onChange={e => setSelMenuItem(e.target.value ? Number(e.target.value) : "")}>
-                  <option value="">Select a dish...</option>
-                  {menuItems.map(mi => <option key={mi.id} value={mi.id}>{mi.name} (₹{mi.price})</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm text-[var(--color-text-muted)] mb-1">Ingredient</label>
-                <select className="input" value={selIngredient} onChange={e => setSelIngredient(e.target.value ? Number(e.target.value) : "")}>
-                  <option value="">Select an ingredient...</option>
-                  {ingredients.map(ing => <option key={ing.id} value={ing.id}>{ing.name} ({ing.unit})</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm text-[var(--color-text-muted)] mb-1">
-                  Quantity Required (per 1 serving)
-                  {selIngredient && (
-                    <span className="ml-1 text-[var(--color-accent)]">
-                      in {ingredients.find(i => i.id === Number(selIngredient))?.unit}
-                    </span>
-                  )}
-                </label>
-                <input className="input" type="number" value={selQty} onChange={e => setSelQty(e.target.value)} placeholder="e.g. 0.2" min={0} step="0.01" />
-              </div>
 
-              {selMenuItem && selIngredient && selQty && parseFloat(selQty) > 0 && (
-                <div className="card text-sm text-center">
-                  <span className="text-[var(--color-text-muted)]">When 1 </span>
-                  <strong>{menuItems.find(m => m.id === Number(selMenuItem))?.name}</strong>
-                  <span className="text-[var(--color-text-muted)]"> is ordered, </span>
-                  <strong className="text-[var(--color-accent)]">{selQty} {ingredients.find(i => i.id === Number(selIngredient))?.unit}</strong>
-                  <span className="text-[var(--color-text-muted)]"> of </span>
-                  <strong>{ingredients.find(i => i.id === Number(selIngredient))?.name}</strong>
-                  <span className="text-[var(--color-text-muted)]"> will be deducted</span>
-                </div>
-              )}
-
-              <div className="flex gap-3 mt-2">
-                <button className="btn btn-secondary flex-1" onClick={() => { setShowAdd(false); setSelMenuItem(""); setSelIngredient(""); setSelQty(""); }}>Cancel</button>
-                <button className="btn btn-primary flex-1" onClick={handleAdd} disabled={adding}>
-                  {adding ? <span className="spinner" /> : "Add Link"}
-                </button>
-              </div>
+            {/* Menu Item Selection */}
+            <div className="mb-4">
+              <label className="block text-sm text-[var(--color-text-muted)] mb-1">Menu Item</label>
+              <select
+                className="input"
+                value={selMenuItem}
+                onChange={e => { setSelMenuItem(e.target.value ? Number(e.target.value) : ""); setPendingLinks([]); }}
+              >
+                <option value="">Select a dish...</option>
+                {menuItems.map(mi => <option key={mi.id} value={mi.id}>{mi.name} (₹{mi.price})</option>)}
+              </select>
             </div>
+
+            {selMenuItem && (
+              <>
+                {/* Already linked ingredients */}
+                {(() => {
+                  const existing = recipes.filter(r => r.menuItemId === Number(selMenuItem));
+                  if (existing.length === 0) return null;
+                  return (
+                    <div className="mb-4">
+                      <div className="text-xs font-semibold text-[var(--color-text-muted)] mb-2 uppercase">Already linked</div>
+                      <div className="flex flex-wrap gap-2">
+                        {existing.map(r => (
+                          <span key={r.id} className="badge badge-done text-xs">
+                            {r.ingredient.name}: {r.quantityRequired} {r.ingredient.unit}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Add ingredient to list */}
+                <div className="mb-3">
+                  <div className="text-xs font-semibold text-[var(--color-text-muted)] mb-2 uppercase">Add ingredients</div>
+                  <div className="flex gap-2">
+                    <select
+                      className="input flex-1 text-sm"
+                      value=""
+                      onChange={e => {
+                        if (e.target.value) addPendingLink(Number(e.target.value));
+                      }}
+                    >
+                      <option value="">+ Pick an ingredient...</option>
+                      {getAvailableIngredients(selMenuItem).map(ing => (
+                        <option key={ing.id} value={ing.id}>{ing.name} ({ing.unit})</option>
+                      ))}
+                    </select>
+                  </div>
+                  {getAvailableIngredients(selMenuItem).length === 0 && pendingLinks.length === 0 && (
+                    <p className="text-xs text-[var(--color-text-muted)] mt-2">
+                      All ingredients are already linked. Add new ingredients in the <Link to="/inventory" className="text-[var(--color-accent)]">Inventory page</Link>.
+                    </p>
+                  )}
+                </div>
+
+                {/* Pending links list */}
+                {pendingLinks.length > 0 && (
+                  <div className="mb-4">
+                    <div className="flex flex-col gap-2">
+                      {pendingLinks.map((link) => (
+                        <div
+                          key={link.ingredientId}
+                          className="card flex items-center justify-between"
+                          style={{ padding: "10px 14px" }}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-sm">{link.ingredientName}</div>
+                          </div>
+                          <div className="flex items-center gap-2 ml-3">
+                            <input
+                              className="input text-sm text-center"
+                              type="number"
+                              value={link.quantity}
+                              onChange={e => updatePendingQty(link.ingredientId, e.target.value)}
+                              placeholder="Qty"
+                              step="0.01"
+                              style={{ width: 70 }}
+                            />
+                            <span className="text-xs text-[var(--color-text-muted)] w-12">{link.ingredientUnit}</span>
+                            <button
+                              className="btn btn-ghost text-xs"
+                              style={{ padding: "4px 8px", minHeight: "auto", color: "var(--color-danger)" }}
+                              onClick={() => removePendingLink(link.ingredientId)}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Preview */}
+                    <div className="card mt-3 text-sm text-center" style={{ background: "var(--color-surface)" }}>
+                      <div className="text-[var(--color-text-muted)] mb-1">When 1 serving of <strong>{menuItems.find(m => m.id === Number(selMenuItem))?.name}</strong> is ordered:</div>
+                      {pendingLinks.map(link => (
+                        <div key={link.ingredientId}>
+                          <strong className="text-[var(--color-accent)]">{link.quantity || "?"} {link.ingredientUnit}</strong> of {link.ingredientName} will be deducted
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex gap-3 mt-2">
+                  <button className="btn btn-secondary flex-1" onClick={closeAddModal}>Cancel</button>
+                  <button
+                    className="btn btn-primary flex-1"
+                    onClick={handleSaveAll}
+                    disabled={saving || pendingLinks.length === 0}
+                  >
+                    {saving ? <span className="spinner" /> : `Save ${pendingLinks.length} Link${pendingLinks.length !== 1 ? "s" : ""}`}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {!selMenuItem && (
+              <div className="flex gap-3 mt-2">
+                <button className="btn btn-secondary flex-1" onClick={closeAddModal}>Cancel</button>
+              </div>
+            )}
           </div>
         </div>
       )}

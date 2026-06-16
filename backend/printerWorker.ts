@@ -12,17 +12,31 @@ const prisma = new PrismaClient({ adapter });
 
 const POLL_INTERVAL = 2000; // 2 seconds
 
-async function processKOT(job: any) {
-  const order = job.order;
+// Types for the snapshot data stored in PrintJob.data
+interface SlipItem {
+  name: string;
+  quantity: number;
+  unitPrice?: number;
+  subtotal?: number;
+}
+
+interface PrintData {
+  tableNumber: number;
+  items: SlipItem[];
+  totalAmount?: number; // Only present in final BILL
+}
+
+function processKOT(data: PrintData) {
   const lines: string[] = [];
 
   lines.push("==================");
-  lines.push("  KITCHEN ORDER");
-  lines.push(`  Table ${order.tableNumber}`);
+  lines.push("  🔥 KITCHEN ORDER");
+  lines.push(`  Table ${data.tableNumber}`);
+  lines.push(`  ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   lines.push("==================");
 
-  for (const item of order.items) {
-    lines.push(`${item.quantity} x ${item.menuItem.name}`);
+  for (const item of data.items) {
+    lines.push(`  ${item.quantity} x ${item.name}`);
   }
 
   lines.push("==================");
@@ -31,21 +45,34 @@ async function processKOT(job: any) {
   console.log(lines.join("\n"));
 }
 
-async function processBILL(job: any) {
-  const order = job.order;
+function processBILL(data: PrintData) {
   const lines: string[] = [];
+  const isFinalBill = data.totalAmount !== undefined;
 
   lines.push("==================");
-  lines.push("       BILL");
-  lines.push(`  Table ${order.tableNumber}`);
+  if (isFinalBill) {
+    lines.push("     📋 FINAL BILL");
+  } else {
+    lines.push("     🖥️ COUNTER SLIP");
+  }
+  lines.push(`  Table ${data.tableNumber}`);
+  lines.push(`  ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   lines.push("==================");
 
-  for (const item of order.items) {
-    lines.push(`${item.menuItem.name} x ${item.quantity} = ₹${item.subtotal}`);
+  for (const item of data.items) {
+    if (isFinalBill && item.subtotal !== undefined) {
+      lines.push(`  ${item.name} x ${item.quantity} = ₹${item.subtotal}`);
+    } else {
+      lines.push(`  ${item.quantity} x ${item.name}`);
+    }
   }
 
-  lines.push("------------------");
-  lines.push(`TOTAL = ₹${order.totalAmount}`);
+  // Only final bill has total
+  if (isFinalBill) {
+    lines.push("------------------");
+    lines.push(`  TOTAL = ₹${data.totalAmount}`);
+  }
+
   lines.push("==================");
   lines.push("");
 
@@ -56,15 +83,6 @@ async function pollPrintJobs() {
   try {
     const pendingJobs = await prisma.printJob.findMany({
       where: { status: "PENDING" },
-      include: {
-        order: {
-          include: {
-            items: {
-              include: { menuItem: true },
-            },
-          },
-        },
-      },
       orderBy: { createdAt: "asc" },
     });
 
@@ -74,10 +92,21 @@ async function pollPrintJobs() {
 
     for (const job of pendingJobs) {
       try {
+        const data = job.data as any;
+
+        if (!data) {
+          console.warn(`⚠️  Print job #${job.id} has no data, skipping`);
+          await prisma.printJob.update({
+            where: { id: job.id },
+            data: { status: "FAILED", processedAt: new Date() },
+          });
+          continue;
+        }
+
         if (job.type === "KOT") {
-          await processKOT(job);
+          processKOT(data as PrintData);
         } else if (job.type === "BILL") {
-          await processBILL(job);
+          processBILL(data as PrintData);
         }
 
         // Mark as completed
@@ -89,7 +118,12 @@ async function pollPrintJobs() {
           },
         });
 
-        console.log(`✅ Print job #${job.id} (${job.type}) completed`);
+        const label = job.type === "BILL" && (data as PrintData).totalAmount !== undefined
+          ? "FINAL BILL"
+          : job.type === "BILL"
+          ? "COUNTER SLIP"
+          : "KOT";
+        console.log(`✅ Print job #${job.id} (${label}) completed`);
       } catch (error) {
         console.error(`❌ Print job #${job.id} failed:`, error);
 

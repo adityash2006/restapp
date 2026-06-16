@@ -53,86 +53,131 @@ export async function createOrder(tableNumber: number) {
   });
 }
 
-export async function addItemToOrder(
+/**
+ * Add multiple items to an order in a single batch.
+ * Creates ONE KOT (kitchen) + ONE counter slip with all items.
+ * No total printed — total is only on the final BILL when order is DONE.
+ */
+export async function addItemsToOrder(
   orderId: number,
-  menuItemId: number,
-  quantity: number
+  items: { menuItemId: number; quantity: number }[]
 ) {
-  // --- All validation first (read-only queries) ---
-
-  // 1. Verify order exists and is PENDING
+  // --- Validation ---
   const order = await prisma.tableOrder.findUnique({ where: { id: orderId } });
   if (!order) throw new Error("Order not found");
   if (order.status !== "PENDING") throw new Error("Order is not active");
 
-  // 2. Get menu item
-  const menuItem = await prisma.menuItem.findUnique({ where: { id: menuItemId } });
-  if (!menuItem) throw new Error("Menu item not found");
+  if (!items || items.length === 0) throw new Error("No items provided");
 
-  // 3. Get recipes for inventory deduction
+  // Fetch all needed menu items at once
+  const menuItemIds = [...new Set(items.map((i) => i.menuItemId))];
+  const menuItemsDb = await prisma.menuItem.findMany({
+    where: { id: { in: menuItemIds } },
+  });
+
+  // Validate all items exist
+  for (const item of items) {
+    const menuItem = menuItemsDb.find((m) => m.id === item.menuItemId);
+    if (!menuItem) throw new Error(`Menu item #${item.menuItemId} not found`);
+    if (item.quantity < 1) throw new Error(`Invalid quantity for ${menuItem.name}`);
+  }
+
+  // Fetch all recipes for these menu items at once
   const recipes = await prisma.recipe.findMany({
-    where: { menuItemId },
+    where: { menuItemId: { in: menuItemIds } },
     include: { ingredient: true },
   });
 
-  // --- Now perform all writes in a batch transaction ---
-  const subtotal = menuItem.price * quantity;
-
-  // Build the list of write operations
+  // --- Build all write operations ---
   const operations: any[] = [];
+  let totalSubtotal = 0;
 
-  // Create order item
-  operations.push(
-    prisma.orderItem.create({
-      data: {
-        orderId,
-        menuItemId,
-        quantity,
-        unitPrice: menuItem.price,
-        subtotal,
-      },
-    })
-  );
+  // Data for print slips
+  const printItems: { name: string; quantity: number }[] = [];
+
+  for (const item of items) {
+    const menuItem = menuItemsDb.find((m) => m.id === item.menuItemId)!;
+    const subtotal = menuItem.price * item.quantity;
+    totalSubtotal += subtotal;
+
+    // Create order item
+    operations.push(
+      prisma.orderItem.create({
+        data: {
+          orderId,
+          menuItemId: item.menuItemId,
+          quantity: item.quantity,
+          unitPrice: menuItem.price,
+          subtotal,
+        },
+      })
+    );
+
+    // Reduce inventory for this item's recipes
+    const itemRecipes = recipes.filter((r) => r.menuItemId === item.menuItemId);
+    for (const recipe of itemRecipes) {
+      const deduction = recipe.quantityRequired * item.quantity;
+      operations.push(
+        prisma.ingredient.update({
+          where: { id: recipe.ingredientId },
+          data: {
+            stockQuantity: { decrement: deduction },
+          },
+        })
+      );
+    }
+
+    // Add to print data
+    printItems.push({
+      name: menuItem.name,
+      quantity: item.quantity,
+    });
+  }
 
   // Update order total
   operations.push(
     prisma.tableOrder.update({
       where: { id: orderId },
       data: {
-        totalAmount: { increment: subtotal },
+        totalAmount: { increment: totalSubtotal },
       },
     })
   );
 
-  // Reduce inventory for each recipe ingredient
-  for (const recipe of recipes) {
-    const deduction = recipe.quantityRequired * quantity;
-    operations.push(
-      prisma.ingredient.update({
-        where: { id: recipe.ingredientId },
-        data: {
-          stockQuantity: { decrement: deduction },
-        },
-      })
-    );
-  }
+  // Snapshot for print slips — only the new items, NO total
+  const slipData = {
+    tableNumber: order.tableNumber,
+    items: printItems,
+  };
 
-  // Create print jobs (KOT and BILL)
+  // KOT for kitchen
   operations.push(
     prisma.printJob.create({
-      data: { orderId, type: "KOT", status: "PENDING" },
+      data: {
+        orderId,
+        type: "KOT",
+        status: "PENDING",
+        data: slipData,
+      },
     })
   );
+
+  // Counter slip (BILL type but no total — just awareness of what was ordered)
   operations.push(
     prisma.printJob.create({
-      data: { orderId, type: "BILL", status: "PENDING" },
+      data: {
+        orderId,
+        type: "BILL",
+        status: "PENDING",
+        data: slipData,
+      },
     })
   );
 
   // Execute all writes atomically
   await prisma.$transaction(operations);
 
-  // Fetch and return the updated order
+  // Return updated order
   const updatedOrder = await prisma.tableOrder.findUnique({
     where: { id: orderId },
     include: {
@@ -142,11 +187,24 @@ export async function addItemToOrder(
     },
   });
 
-  return { orderItem: { menuItem }, order: updatedOrder };
+  return { order: updatedOrder };
 }
 
 export async function updateOrderStatus(id: number, status: OrderStatus) {
-  return prisma.tableOrder.update({
+  // Fetch full order before updating (for BILL snapshot)
+  const order = await prisma.tableOrder.findUnique({
+    where: { id },
+    include: {
+      items: {
+        include: { menuItem: true },
+      },
+    },
+  });
+
+  if (!order) throw new Error("Order not found");
+
+  // Update the status
+  const updatedOrder = await prisma.tableOrder.update({
     where: { id },
     data: { status },
     include: {
@@ -155,6 +213,31 @@ export async function updateOrderStatus(id: number, status: OrderStatus) {
       },
     },
   });
+
+  // If marking as DONE, create a final BILL with all items + total
+  if (status === "DONE") {
+    const billData = {
+      tableNumber: order.tableNumber,
+      items: order.items.map((item) => ({
+        name: item.menuItem.name,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        subtotal: item.subtotal,
+      })),
+      totalAmount: order.totalAmount,
+    };
+
+    await prisma.printJob.create({
+      data: {
+        orderId: id,
+        type: "BILL",
+        status: "PENDING",
+        data: billData,
+      },
+    });
+  }
+
+  return updatedOrder;
 }
 
 export async function getTodaySummary() {

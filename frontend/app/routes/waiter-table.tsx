@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate } from "react-router";
 import {
   getOrder,
   getMenu,
-  addItemToOrder,
+  addItemsToOrder,
   updateOrderStatus,
   type TableOrder,
   type MenuItem,
@@ -22,6 +22,12 @@ function Toast({ message, type, onClose }: { message: string; type: "success" | 
   );
 }
 
+// Cart item type — what the waiter is building before submitting
+interface CartItem {
+  menuItem: MenuItem;
+  quantity: number;
+}
+
 export default function WaiterTablePage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -30,14 +36,15 @@ export default function WaiterTablePage() {
   const [order, setOrder] = useState<TableOrder | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showAddItem, setShowAddItem] = useState(false);
-  const [search, setSearch] = useState("");
-  const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
-  const [quantity, setQuantity] = useState(1);
-  const [adding, setAdding] = useState(false);
-  const [showDropdown, setShowDropdown] = useState(false);
   const [markingDone, setMarkingDone] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  // Cart state
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [search, setSearch] = useState("");
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
 
   const fetchOrder = useCallback(async () => {
@@ -80,22 +87,64 @@ export default function WaiterTablePage() {
     item.name.toLowerCase().includes(search.toLowerCase())
   );
 
-  const handleAddItem = async () => {
-    if (!selectedItem) return;
+  // Cart operations
+  const addToCart = (menuItem: MenuItem) => {
+    setCart((prev) => {
+      const existing = prev.find((c) => c.menuItem.id === menuItem.id);
+      if (existing) {
+        return prev.map((c) =>
+          c.menuItem.id === menuItem.id ? { ...c, quantity: c.quantity + 1 } : c
+        );
+      }
+      return [...prev, { menuItem, quantity: 1 }];
+    });
+    setSearch("");
+    setShowDropdown(false);
+  };
 
-    setAdding(true);
+  const updateCartQty = (menuItemId: number, delta: number) => {
+    setCart((prev) =>
+      prev
+        .map((c) =>
+          c.menuItem.id === menuItemId ? { ...c, quantity: c.quantity + delta } : c
+        )
+        .filter((c) => c.quantity > 0)
+    );
+  };
+
+  const removeFromCart = (menuItemId: number) => {
+    setCart((prev) => prev.filter((c) => c.menuItem.id !== menuItemId));
+  };
+
+  const cartTotal = cart.reduce((sum, c) => sum + c.menuItem.price * c.quantity, 0);
+
+  // Submit entire cart as one batch
+  const handleSubmitCart = async () => {
+    if (cart.length === 0) return;
+
+    setSubmitting(true);
     try {
-      const result = await addItemToOrder(orderId, selectedItem.id, quantity);
+      const items = cart.map((c) => ({
+        menuItemId: c.menuItem.id,
+        quantity: c.quantity,
+      }));
+
+      const result = await addItemsToOrder(orderId, items);
       setOrder(result.order);
-      setToast({ message: `Added ${quantity}x ${selectedItem.name}`, type: "success" });
+
+      const itemCount = cart.reduce((sum, c) => sum + c.quantity, 0);
+      setToast({
+        message: `✅ Sent ${itemCount} item${itemCount !== 1 ? "s" : ""} to kitchen!`,
+        type: "success",
+      });
+
+      // Clear cart and close modal
+      setCart([]);
       setShowAddItem(false);
-      setSelectedItem(null);
-      setSearch("");
-      setQuantity(1);
     } catch (err: any) {
-      setToast({ message: err.message || "Failed to add item", type: "error" });
+      setToast({ message: err.message || "Failed to add items", type: "error" });
     } finally {
-      setAdding(false);
+      setSubmitting(false);
     }
   };
 
@@ -224,7 +273,7 @@ export default function WaiterTablePage() {
                 onClick={() => setShowAddItem(true)}
                 id="add-item-btn"
               >
-                + Add Item
+                + Add Items
               </button>
               <button
                 className="btn btn-success btn-lg"
@@ -239,136 +288,146 @@ export default function WaiterTablePage() {
         )}
       </div>
 
-      {/* Add Item Modal */}
+      {/* Add Items Modal — Cart Style */}
       {showAddItem && (
-        <div className="modal-overlay" onClick={() => { setShowAddItem(false); setSelectedItem(null); setSearch(""); setQuantity(1); }}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-xl font-bold mb-4">Add Item</h2>
+        <div className="modal-overlay" onClick={() => { if (cart.length === 0) { setShowAddItem(false); setSearch(""); } }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxHeight: "90vh", overflow: "auto" }}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold">Add Items</h2>
+              {cart.length > 0 && (
+                <span className="badge badge-pending">{cart.length} in cart</span>
+              )}
+            </div>
 
-            {/* Search / Select Menu Item */}
-            {!selectedItem ? (
-              <div className="relative" ref={searchRef}>
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="Search menu items..."
-                  value={search}
-                  onChange={(e) => {
-                    setSearch(e.target.value);
-                    setShowDropdown(true);
-                  }}
-                  onFocus={() => setShowDropdown(true)}
-                  autoFocus
-                  id="menu-search-input"
-                />
-                {showDropdown && (
-                  <div className="search-dropdown">
-                    {filteredMenu.length === 0 ? (
-                      <div className="p-4 text-center text-[var(--color-text-muted)]">
-                        No items found
-                      </div>
-                    ) : (
-                      filteredMenu.map((item) => (
+            {/* Search Menu Items */}
+            <div className="relative mb-4" ref={searchRef}>
+              <input
+                type="text"
+                className="input"
+                placeholder="Search menu items..."
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setShowDropdown(true);
+                }}
+                onFocus={() => setShowDropdown(true)}
+                autoFocus
+                id="menu-search-input"
+              />
+              {showDropdown && (
+                <div className="search-dropdown">
+                  {filteredMenu.length === 0 ? (
+                    <div className="p-4 text-center text-[var(--color-text-muted)]">
+                      No items found
+                    </div>
+                  ) : (
+                    filteredMenu.map((item) => {
+                      const inCart = cart.find((c) => c.menuItem.id === item.id);
+                      return (
                         <div
                           key={item.id}
                           className="search-dropdown-item"
-                          onClick={() => {
-                            setSelectedItem(item);
-                            setShowDropdown(false);
-                            setSearch("");
-                          }}
+                          onClick={() => addToCart(item)}
                           id={`menu-item-${item.id}`}
                         >
-                          <span className="font-medium">{item.name}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{item.name}</span>
+                            {inCart && (
+                              <span className="text-xs text-[var(--color-success)] font-bold">
+                                ({inCart.quantity} in cart)
+                              </span>
+                            )}
+                          </div>
                           <span className="text-[var(--color-accent)] font-bold">₹{item.price}</span>
                         </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div>
-                {/* Selected item display */}
-                <div className="card flex items-center justify-between mb-4">
-                  <div>
-                    <div className="font-bold text-lg">{selectedItem.name}</div>
-                    <div className="text-sm text-[var(--color-accent)]">₹{selectedItem.price}</div>
-                  </div>
-                  <button
-                    className="btn btn-ghost text-sm"
-                    onClick={() => setSelectedItem(null)}
-                    id="change-item-btn"
-                  >
-                    Change
-                  </button>
+                      );
+                    })
+                  )}
                 </div>
+              )}
+            </div>
 
-                {/* Quantity */}
-                <div className="mb-4">
-                  <label className="block text-sm text-[var(--color-text-muted)] mb-2">
-                    Quantity
-                  </label>
-                  <div className="flex items-center gap-3">
-                    <button
-                      className="btn btn-secondary btn-icon text-xl"
-                      onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                      id="qty-minus"
+            {/* Cart Items */}
+            {cart.length > 0 && (
+              <div className="mb-4">
+                <div className="text-sm font-semibold text-[var(--color-text-muted)] mb-2 uppercase tracking-wider">
+                  Cart
+                </div>
+                <div className="flex flex-col gap-2">
+                  {cart.map((cartItem) => (
+                    <div
+                      key={cartItem.menuItem.id}
+                      className="card flex items-center justify-between py-3"
+                      style={{ padding: "12px 16px" }}
                     >
-                      −
-                    </button>
-                    <input
-                      type="number"
-                      className="input text-center text-2xl font-bold"
-                      value={quantity}
-                      onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                      min={1}
-                      style={{ width: "80px" }}
-                      id="qty-input"
-                    />
-                    <button
-                      className="btn btn-secondary btn-icon text-xl"
-                      onClick={() => setQuantity(quantity + 1)}
-                      id="qty-plus"
-                    >
-                      +
-                    </button>
-                  </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium truncate">{cartItem.menuItem.name}</div>
+                        <div className="text-xs text-[var(--color-text-muted)]">
+                          ₹{cartItem.menuItem.price} × {cartItem.quantity} = <span className="text-[var(--color-accent)] font-bold">₹{cartItem.menuItem.price * cartItem.quantity}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 ml-3">
+                        <button
+                          className="btn btn-secondary btn-icon"
+                          onClick={() => updateCartQty(cartItem.menuItem.id, -1)}
+                          style={{ width: 32, height: 32, minHeight: 32, fontSize: 16 }}
+                        >
+                          −
+                        </button>
+                        <span className="text-lg font-bold w-6 text-center">{cartItem.quantity}</span>
+                        <button
+                          className="btn btn-secondary btn-icon"
+                          onClick={() => updateCartQty(cartItem.menuItem.id, 1)}
+                          style={{ width: 32, height: 32, minHeight: 32, fontSize: 16 }}
+                        >
+                          +
+                        </button>
+                        <button
+                          className="btn btn-ghost text-sm"
+                          onClick={() => removeFromCart(cartItem.menuItem.id)}
+                          style={{ color: "var(--color-danger)", padding: "4px 8px", minHeight: "auto" }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
-                {/* Subtotal preview */}
-                <div className="card mb-4 text-center">
-                  <div className="text-sm text-[var(--color-text-muted)]">Subtotal</div>
-                  <div className="text-2xl font-bold text-[var(--color-accent)]">
-                    ₹{selectedItem.price * quantity}
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className="flex gap-3">
-                  <button
-                    className="btn btn-secondary flex-1"
-                    onClick={() => {
-                      setShowAddItem(false);
-                      setSelectedItem(null);
-                      setSearch("");
-                      setQuantity(1);
-                    }}
-                    id="cancel-add-item"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    className="btn btn-primary flex-1"
-                    onClick={handleAddItem}
-                    disabled={adding}
-                    id="confirm-add-item"
-                  >
-                    {adding ? <span className="spinner" /> : "Add to Order"}
-                  </button>
+                {/* Cart Total */}
+                <div className="card mt-3 flex items-center justify-between">
+                  <span className="font-semibold text-[var(--color-text-muted)]">Cart Total</span>
+                  <span className="text-xl font-bold text-[var(--color-accent)]">₹{cartTotal}</span>
                 </div>
               </div>
             )}
+
+            {/* Actions */}
+            <div className="flex gap-3">
+              <button
+                className="btn btn-secondary flex-1"
+                onClick={() => {
+                  setShowAddItem(false);
+                  setCart([]);
+                  setSearch("");
+                }}
+                id="cancel-add-items"
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary flex-1"
+                onClick={handleSubmitCart}
+                disabled={submitting || cart.length === 0}
+                id="send-to-kitchen"
+              >
+                {submitting ? (
+                  <span className="spinner" />
+                ) : (
+                  `Send ${cart.reduce((s, c) => s + c.quantity, 0)} item${cart.reduce((s, c) => s + c.quantity, 0) !== 1 ? "s" : ""} to Kitchen`
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -8,11 +8,11 @@ datasource db {
 }
 
 model MenuItem {
-  id        Int         @id @default(autoincrement())
-  name      String      @unique
-  price     Float
-  createdAt DateTime    @default(now())
-  recipes   Recipe[]
+  id         Int         @id @default(autoincrement())
+  name       String      @unique
+  price      Float
+  createdAt  DateTime    @default(now())
+  recipes    Recipe[]
   orderItems OrderItem[]
 }
 
@@ -28,7 +28,7 @@ model TableOrder {
 }
 
 model OrderItem {
-  id         Int       @id @default(autoincrement())
+  id         Int        @id @default(autoincrement())
   quantity   Int
   unitPrice  Float
   subtotal   Float
@@ -62,6 +62,7 @@ model PrintJob {
   orderId     Int
   type        PrintJobType
   status      PrintJobStatus @default(PENDING)
+  data        Json?
   createdAt   DateTime       @default(now())
   processedAt DateTime?
   order       TableOrder     @relation(fields: [orderId], references: [id])

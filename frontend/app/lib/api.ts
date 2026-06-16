@@ -96,10 +96,10 @@ export const createOrder = (tableNumber: number) =>
     method: "POST",
     body: JSON.stringify({ tableNumber }),
   });
-export const addItemToOrder = (orderId: number, menuItemId: number, quantity: number) =>
-  fetchJSON<{ orderItem: OrderItem; order: TableOrder }>(`/orders/${orderId}/items`, {
+export const addItemsToOrder = (orderId: number, items: { menuItemId: number; quantity: number }[]) =>
+  fetchJSON<{ order: TableOrder }>(`/orders/${orderId}/items`, {
     method: "POST",
-    body: JSON.stringify({ menuItemId, quantity }),
+    body: JSON.stringify({ items }),
   });
 export const updateOrderStatus = (id: number, status: "PENDING" | "DONE") =>
   fetchJSON<TableOrder>(`/orders/${id}/status`, {

@@ -7,6 +7,7 @@ export default function LiveTablesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+  const [auth,setAuth]=useState(false);
 
   const fetchOrders = useCallback(async () => {
     try {
@@ -25,6 +26,14 @@ export default function LiveTablesPage() {
     fetchOrders();
   }, [fetchOrders]);
 
+  useEffect(()=>{
+    const a= localStorage.getItem('token');
+    if(a=="passo"){
+      setAuth(true)
+    }
+  })
+
+  if(auth){
   return (
     <div className="min-h-screen">
       {/* Nav */}
@@ -148,4 +157,11 @@ export default function LiveTablesPage() {
       </div>
     </div>
   );
+}else{
+  return (
+    <>
+      <div> you are not authenticated</div>
+    </>
+  )
+}
 }
