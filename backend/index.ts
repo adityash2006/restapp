@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import path from "path";
+import os from "os";
 import menuRoutes from "./src/routes/menu.routes";
 import orderRoutes from "./src/routes/order.routes";
 import inventoryRoutes from "./src/routes/inventory.routes";
@@ -27,17 +28,14 @@ app.get("/api/health", (_req, res) => {
 });
 
 // ── Serve Frontend (production build) ────────────────────────
-// After running `bun run build` in the frontend folder,
-// Express serves the built client files so waiter phones and
-// the counter browser can access everything on port 3000.
 const clientBuildPath = path.resolve(import.meta.dir, "../frontend/build/client");
 
 // Serve static assets (JS, CSS, images)
 app.use(express.static(clientBuildPath));
 
 // For any non-API route, serve index.html (SPA client-side routing)
-// Express v5 requires named wildcard params
-app.get("/{*path}", (_req, res) => {
+// Express v5 requires named wildcard: {*param} instead of bare *
+app.get("/{*splat}", (_req, res) => {
   const indexPath = path.join(clientBuildPath, "index.html");
   res.sendFile(indexPath, (err) => {
     if (err) {
@@ -46,8 +44,23 @@ app.get("/{*path}", (_req, res) => {
   });
 });
 
+// Get LAN IP so waiter phones know which address to use
+function getLocalIp(): string {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const addr of interfaces[name] || []) {
+      if (addr.family === "IPv4" && !addr.internal) {
+        return addr.address;
+      }
+    }
+  }
+  return "localhost";
+}
+
 app.listen(Number(PORT), "0.0.0.0", () => {
+  const ip = getLocalIp();
   console.log(`🚀 Kesari backend running on http://0.0.0.0:${PORT}`);
-  console.log(`   Frontend: http://localhost:${PORT}`);
-  console.log(`   API:      http://localhost:${PORT}/api`);
+  console.log(`   Local:   http://localhost:${PORT}`);
+  console.log(`   Network: http://${ip}:${PORT}`);
+  console.log(`   API:     http://${ip}:${PORT}/api`);
 });
