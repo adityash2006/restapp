@@ -290,8 +290,8 @@ export default function WaiterTablePage() {
 
       {/* Add Items Modal — Cart Style */}
       {showAddItem && (
-        <div className="modal-overlay" onClick={() => { if (cart.length === 0) { setShowAddItem(false); setSearch(""); } }}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxHeight: "90vh", overflow: "auto" }}>
+        <div className="modal-overlay modal-overlay-center" onClick={() => { if (cart.length === 0) { setShowAddItem(false); setSearch(""); } }}>
+          <div className="modal-content modal-content-expanded" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold">Add Items</h2>
               {cart.length > 0 && (
@@ -300,7 +300,7 @@ export default function WaiterTablePage() {
             </div>
 
             {/* Search Menu Items */}
-            <div className="relative mb-4" ref={searchRef}>
+            <div className={`relative mb-4 ${showDropdown ? "search-container-active" : ""}`} ref={searchRef}>
               <input
                 type="text"
                 className="input"
@@ -315,8 +315,8 @@ export default function WaiterTablePage() {
                 id="menu-search-input"
               />
               {showDropdown && (
-                <div className="search-dropdown">
-                  {filteredMenu.length === 0 ? (
+                <div className="search-dropdown-relative">
+                  {filteredMenu.length === 0 ?(
                     <div className="p-4 text-center text-[var(--color-text-muted)]">
                       No items found
                     </div>
@@ -326,7 +326,7 @@ export default function WaiterTablePage() {
                       return (
                         <div
                           key={item.id}
-                          className="search-dropdown-item"
+                          className="search-dropdown-item search-dropdown-item-expanded"
                           onClick={() => addToCart(item)}
                           id={`menu-item-${item.id}`}
                         >
