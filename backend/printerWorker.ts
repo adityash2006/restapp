@@ -224,7 +224,12 @@ async function printFinalBill(data: PrintData): Promise<void> {
 
 // ── Poll & Process ─────────────────────────────────────────────
 
+let isPolling = false;
+
 async function pollPrintJobs() {
+  if (isPolling) return;
+  isPolling = true;
+
   try {
     const pendingJobs = await prisma.printJob.findMany({
       where: { status: "PENDING" },
@@ -284,6 +289,8 @@ async function pollPrintJobs() {
     }
   } catch (error) {
     console.error("Error polling print jobs:", error);
+  } finally {
+    isPolling = false;
   }
 }
 
