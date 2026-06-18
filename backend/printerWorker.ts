@@ -165,13 +165,10 @@ async function printFinalBill(data: PrintData): Promise<void> {
   printer.println(restaurantInfo.name);
   printer.bold(false);
   printer.setTextNormal();
-  if (restaurantInfo.tagline) printer.println(restaurantInfo.tagline);
+  // if (restaurantInfo.tagline) printer.println(restaurantInfo.tagline);
   printer.drawLine();
 
   printer.alignCenter();
-  printer.bold(true);
-  printer.println("BILL");
-  printer.bold(false);
   printer.setTextSize(0, 1);
   printer.println(`TABLE ${data.tableNumber}`);
   printer.setTextNormal();
@@ -203,7 +200,7 @@ async function printFinalBill(data: PrintData): Promise<void> {
 
   printer.drawLine();
 
-  printer.alignRight();
+  printer.alignCenter();
   printer.bold(true);
   printer.setTextSize(1, 1);
   printer.println(`TOTAL: Rs.${data.totalAmount}`);
@@ -213,7 +210,7 @@ async function printFinalBill(data: PrintData): Promise<void> {
 
   printer.alignCenter();
   printer.println("Thank you! Visit again.");
-  printer.newLine();
+  
   printer.newLine();
   printer.cut();
 
