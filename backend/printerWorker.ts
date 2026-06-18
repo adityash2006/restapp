@@ -184,9 +184,9 @@ async function printFinalBill(data: PrintData): Promise<void> {
   printer.alignLeft();
   printer.bold(true);
   printer.tableCustom([
-    { text: "ITEM", align: "LEFT", width: 0.5 },
+    { text: "ITEM", align: "LEFT", width: 0.45 },
     { text: "QTY", align: "CENTER", width: 0.15 },
-    { text: "RATE", align: "RIGHT", width: 0.15 },
+    { text: "RATE", align: "RIGHT", width: 0.2 },
     { text: "AMT", align: "RIGHT", width: 0.2 },
   ]);
   printer.bold(false);
@@ -194,9 +194,9 @@ async function printFinalBill(data: PrintData): Promise<void> {
 
   for (const item of data.items) {
     printer.tableCustom([
-      { text: item.name, align: "LEFT", width: 0.5 },
+      { text: item.name, align: "LEFT", width: 0.45 },
       { text: String(item.quantity), align: "CENTER", width: 0.15 },
-      { text: `${item.unitPrice ?? ""}`, align: "RIGHT", width: 0.15 },
+      { text: `${item.unitPrice ?? ""}`, align: "RIGHT", width: 0.2 },
       { text: `${item.subtotal ?? ""}`, align: "RIGHT", width: 0.2 },
     ]);
   }
