@@ -4,6 +4,13 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import { ThermalPrinter } from "node-thermal-printer";
 import { printerConfig, restaurantInfo } from "./src/printerConfig";
+import fs from "fs";
+import path from "path";
+import os from "os";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
@@ -28,15 +35,48 @@ interface PrintData {
   totalAmount?: number; // Only present in final BILL
 }
 
+// ── Raw Windows printing helper ─────────────────────────────────
+// Sends raw ESC/POS bytes straight to a shared Windows printer queue,
+// bypassing any native node addon (avoids the driver/ABI issues we hit before).
+
+async function sendRawToWindowsPrinter(shareName: string, buffer: Buffer): Promise<void> {
+  const tempFile = path.join(
+    os.tmpdir(),
+    `kesari_print_${Date.now()}_${Math.random().toString(36).slice(2)}.prn`
+  );
+  fs.writeFileSync(tempFile, buffer);
+  try {
+    await execFileAsync("cmd.exe", ["/c", "copy", "/b", tempFile, `\\\\localhost\\${shareName}`]);
+  } finally {
+    fs.unlink(tempFile, () => {});
+  }
+}
+
 // ── Printer Instances ──────────────────────────────────────────
 
 function createPrinter(config: typeof printerConfig.counter): ThermalPrinter {
   return new ThermalPrinter({
     type: config.type,
-    interface: config.interface,
+    // For windows-shared printers we never actually use this interface to
+    // connect (we send the buffer manually below), so a placeholder is fine.
+    interface: config.mode === "network" ? config.interface : "buffer:dummy",
     width: config.width,
     options: config.options,
   });
+}
+
+// Routes the finished receipt to the right destination based on printer mode
+async function sendPrint(printer: ThermalPrinter, config: typeof printerConfig.counter): Promise<void> {
+  if (config.mode === "windows-shared") {
+    const buffer = printer.getBuffer();
+    await sendRawToWindowsPrinter(config.interface, buffer);
+  } else {
+    const isConnected = await printer.isPrinterConnected();
+    if (!isConnected) {
+      throw new Error(`Could not connect to network printer at ${config.interface}`);
+    }
+    await printer.execute();
+  }
 }
 
 // ── KOT: Kitchen Order Ticket ──────────────────────────────────
@@ -44,7 +84,6 @@ function createPrinter(config: typeof printerConfig.counter): ThermalPrinter {
 async function printKOT(data: PrintData): Promise<void> {
   const printer = createPrinter(printerConfig.kitchen);
 
-  // Header
   printer.alignCenter();
   printer.bold(true);
   printer.setTextSize(1, 1);
@@ -53,7 +92,6 @@ async function printKOT(data: PrintData): Promise<void> {
   printer.setTextNormal();
   printer.drawLine();
 
-  // Table number — big and bold
   printer.alignCenter();
   printer.bold(true);
   printer.setTextSize(1, 1);
@@ -63,11 +101,10 @@ async function printKOT(data: PrintData): Promise<void> {
   printer.println(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }));
   printer.drawLine();
 
-  // Items
   printer.alignLeft();
   printer.bold(true);
   for (const item of data.items) {
-    printer.setTextSize(0, 1); // taller text for kitchen readability
+    printer.setTextSize(0, 1);
     printer.println(`${item.quantity} x ${item.name}`);
   }
   printer.setTextNormal();
@@ -78,9 +115,8 @@ async function printKOT(data: PrintData): Promise<void> {
   printer.newLine();
   printer.cut();
 
-  await printer.execute();
+  await sendPrint(printer, printerConfig.kitchen);
 
-  // Also log to console for backup
   console.log(`  [KOT] Table ${data.tableNumber}: ${data.items.map(i => `${i.quantity}x ${i.name}`).join(", ")}`);
 }
 
@@ -89,7 +125,6 @@ async function printKOT(data: PrintData): Promise<void> {
 async function printCounterSlip(data: PrintData): Promise<void> {
   const printer = createPrinter(printerConfig.counter);
 
-  // Header
   printer.alignCenter();
   printer.bold(true);
   printer.println("ORDER SLIP");
@@ -105,7 +140,6 @@ async function printCounterSlip(data: PrintData): Promise<void> {
   printer.println(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }));
   printer.drawLine();
 
-  // Items
   printer.alignLeft();
   for (const item of data.items) {
     printer.println(`${item.quantity} x ${item.name}`);
@@ -115,7 +149,7 @@ async function printCounterSlip(data: PrintData): Promise<void> {
   printer.newLine();
   printer.cut();
 
-  await printer.execute();
+  await sendPrint(printer, printerConfig.counter);
 
   console.log(`  [COUNTER SLIP] Table ${data.tableNumber}: ${data.items.map(i => `${i.quantity}x ${i.name}`).join(", ")}`);
 }
@@ -125,7 +159,6 @@ async function printCounterSlip(data: PrintData): Promise<void> {
 async function printFinalBill(data: PrintData): Promise<void> {
   const printer = createPrinter(printerConfig.counter);
 
-  // Restaurant header
   printer.alignCenter();
   printer.bold(true);
   printer.setTextSize(1, 1);
@@ -135,7 +168,6 @@ async function printFinalBill(data: PrintData): Promise<void> {
   if (restaurantInfo.tagline) printer.println(restaurantInfo.tagline);
   printer.drawLine();
 
-  // Bill header
   printer.alignCenter();
   printer.bold(true);
   printer.println("BILL");
@@ -149,7 +181,6 @@ async function printFinalBill(data: PrintData): Promise<void> {
   }));
   printer.drawLine();
 
-  // Column headers
   printer.alignLeft();
   printer.bold(true);
   printer.tableCustom([
@@ -161,7 +192,6 @@ async function printFinalBill(data: PrintData): Promise<void> {
   printer.bold(false);
   printer.drawLine();
 
-  // Items
   for (const item of data.items) {
     printer.tableCustom([
       { text: item.name, align: "LEFT", width: 0.5 },
@@ -173,7 +203,6 @@ async function printFinalBill(data: PrintData): Promise<void> {
 
   printer.drawLine();
 
-  // Total
   printer.alignRight();
   printer.bold(true);
   printer.setTextSize(1, 1);
@@ -182,14 +211,13 @@ async function printFinalBill(data: PrintData): Promise<void> {
   printer.bold(false);
   printer.drawLine();
 
-  // Footer
   printer.alignCenter();
   printer.println("Thank you! Visit again.");
   printer.newLine();
   printer.newLine();
   printer.cut();
 
-  await printer.execute();
+  await sendPrint(printer, printerConfig.counter);
 
   console.log(`  [FINAL BILL] Table ${data.tableNumber}: Rs.${data.totalAmount}`);
 }
@@ -230,7 +258,6 @@ async function pollPrintJobs() {
           }
         }
 
-        // Mark as completed
         await prisma.printJob.update({
           where: { id: job.id },
           data: {
@@ -270,10 +297,7 @@ async function main() {
   console.log(`  Counter: ${printerConfig.counter.interface}`);
   console.log(`  Polling every ${POLL_INTERVAL / 1000}s...\n`);
 
-  // Poll indefinitely
   setInterval(pollPrintJobs, POLL_INTERVAL);
-
-  // Run once immediately
   await pollPrintJobs();
 }
 
