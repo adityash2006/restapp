@@ -275,6 +275,31 @@ export async function getTodaySummary() {
   };
 }
 
+export async function getDetailedSummary() {
+  const completedOrders = await prisma.tableOrder.findMany({
+    where: {
+      status: "DONE",
+    },
+    include: {
+      items: {
+        include: { menuItem: true },
+      },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  const totalRevenue = completedOrders.reduce((sum, o) => sum + o.totalAmount, 0);
+  const orderCount = completedOrders.length;
+  const averageOrderValue = orderCount > 0 ? totalRevenue / orderCount : 0;
+
+  return {
+    totalRevenue,
+    orderCount,
+    averageOrderValue,
+    orders: completedOrders,
+  };
+}
+
 /**
  * Remove a specific item from an order.
  * Restores inventory, adjusts total, and prints a CANCEL KOT to kitchen.

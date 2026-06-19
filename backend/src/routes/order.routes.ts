@@ -6,6 +6,7 @@ import {
   addItemsToOrder,
   updateOrderStatus,
   getTodaySummary,
+  getDetailedSummary,
   removeOrderItem,
 } from "../services/order.service";
 
@@ -30,6 +31,17 @@ router.get("/summary/today", async (_req, res) => {
   } catch (error) {
     console.error("Error fetching summary:", error);
     res.status(500).json({ error: "Failed to fetch today's summary" });
+  }
+});
+
+// GET /api/orders/summary/detailed
+router.get("/summary/detailed", async (_req, res) => {
+  try {
+    const summary = await getDetailedSummary();
+    res.json(summary);
+  } catch (error) {
+    console.error("Error fetching detailed summary:", error);
+    res.status(500).json({ error: "Failed to fetch detailed summary" });
   }
 });
 
