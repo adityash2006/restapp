@@ -33,6 +33,7 @@ interface PrintData {
   tableNumber: number;
   items: SlipItem[];
   totalAmount?: number; // Only present in final BILL
+  isCancelled?: boolean; // True if this is a cancellation slip
 }
 
 // ── Raw Windows printing helper ─────────────────────────────────
@@ -85,9 +86,14 @@ async function printKOT(data: PrintData): Promise<void> {
   const printer = createPrinter(printerConfig.kitchen);
 
   printer.alignCenter();
+  printer.alignCenter();
   printer.bold(true);
   printer.setTextSize(1, 1);
-  printer.println("KITCHEN ORDER");
+  if (data.isCancelled) {
+    printer.println("CANCEL ORDER");
+  } else {
+    printer.println("KITCHEN ORDER");
+  }
   printer.bold(false);
   printer.setTextNormal();
   printer.drawLine();
@@ -126,8 +132,13 @@ async function printCounterSlip(data: PrintData): Promise<void> {
   const printer = createPrinter(printerConfig.counter);
 
   printer.alignCenter();
+  printer.alignCenter();
   printer.bold(true);
-  printer.println("ORDER SLIP");
+  if (data.isCancelled) {
+    printer.println("CANCEL SLIP");
+  } else {
+    printer.println("ORDER SLIP");
+  }
   printer.bold(false);
   printer.drawLine();
 
@@ -268,9 +279,11 @@ async function pollPrintJobs() {
           },
         });
 
-        const label = job.type === "KOT" ? "KOT"
-          : data.totalAmount !== undefined ? "FINAL BILL"
-          : "COUNTER SLIP";
+        const label = job.type === "KOT" 
+          ? (data.isCancelled ? "CANCEL KOT" : "KOT")
+          : data.totalAmount !== undefined 
+            ? "FINAL BILL"
+            : (data.isCancelled ? "CANCEL SLIP" : "COUNTER SLIP");
         console.log(`  ✅ Job #${job.id} (${label}) completed`);
       } catch (error: any) {
         console.error(`  ❌ Job #${job.id} failed: ${error.message}`);

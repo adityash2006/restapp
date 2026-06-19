@@ -274,3 +274,115 @@ export async function getTodaySummary() {
     orders: completedOrders,
   };
 }
+
+/**
+ * Remove a specific item from an order.
+ * Restores inventory, adjusts total, and prints a CANCEL KOT to kitchen.
+ */
+export async function removeOrderItem(orderId: number, orderItemId: number) {
+  // --- Validation ---
+  const order = await prisma.tableOrder.findUnique({
+    where: { id: orderId },
+  });
+  if (!order) throw new Error("Order not found");
+  if (order.status !== "PENDING") throw new Error("Order is not active");
+
+  const orderItem = await prisma.orderItem.findUnique({
+    where: { id: orderItemId },
+    include: { menuItem: true },
+  });
+
+  if (!orderItem || orderItem.orderId !== orderId) {
+    throw new Error("Order item not found in this order");
+  }
+
+  // Fetch recipes for the menu item
+  const recipes = await prisma.recipe.findMany({
+    where: { menuItemId: orderItem.menuItemId },
+    include: { ingredient: true },
+  });
+
+  // --- Build all write operations ---
+  const operations: any[] = [];
+
+  // Delete the order item
+  operations.push(
+    prisma.orderItem.delete({
+      where: { id: orderItemId },
+    })
+  );
+
+  // Restore inventory for this item's recipes
+  for (const recipe of recipes) {
+    const restoration = recipe.quantityRequired * orderItem.quantity;
+    operations.push(
+      prisma.ingredient.update({
+        where: { id: recipe.ingredientId },
+        data: {
+          stockQuantity: { increment: restoration },
+        },
+      })
+    );
+  }
+
+  // Update order total
+  operations.push(
+    prisma.tableOrder.update({
+      where: { id: orderId },
+      data: {
+        totalAmount: { decrement: orderItem.subtotal },
+      },
+    })
+  );
+
+  // Snapshot for print slips — CANCEL slip
+  const slipData = {
+    tableNumber: order.tableNumber,
+    items: [
+      {
+        name: orderItem.menuItem.name,
+        quantity: orderItem.quantity,
+      },
+    ],
+    isCancelled: true,
+  };
+
+  // KOT for kitchen (Cancel)
+  operations.push(
+    prisma.printJob.create({
+      data: {
+        orderId,
+        type: "KOT",
+        status: "PENDING",
+        data: slipData,
+      },
+    })
+  );
+
+  // Counter slip (Cancel)
+  operations.push(
+    prisma.printJob.create({
+      data: {
+        orderId,
+        type: "BILL",
+        status: "PENDING",
+        data: slipData,
+      },
+    })
+  );
+
+  // Execute all writes atomically
+  await prisma.$transaction(operations);
+
+  // Return updated order
+  const updatedOrder = await prisma.tableOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      items: {
+        include: { menuItem: true },
+      },
+    },
+  });
+
+  return { order: updatedOrder };
+}

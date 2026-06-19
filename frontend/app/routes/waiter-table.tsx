@@ -5,6 +5,7 @@ import {
   getMenu,
   addItemsToOrder,
   updateOrderStatus,
+  removeOrderItem,
   type TableOrder,
   type MenuItem,
 } from "~/lib/api";
@@ -161,6 +162,17 @@ export default function WaiterTablePage() {
     }
   };
 
+  const handleRemoveItem = async (itemId: number) => {
+    if (!confirm("Are you sure you want to remove this item?")) return;
+    try {
+      const result = await removeOrderItem(orderId, itemId);
+      setOrder(result.order);
+      setToast({ message: "Item removed and KOT cancelled", type: "success" });
+    } catch (err: any) {
+      setToast({ message: err.message || "Failed to remove item", type: "error" });
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -231,6 +243,7 @@ export default function WaiterTablePage() {
                     <th>Item</th>
                     <th className="text-center">Qty</th>
                     <th className="text-right">Amount</th>
+                    {order.status === "PENDING" && <th></th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -248,6 +261,18 @@ export default function WaiterTablePage() {
                       <td className="text-right font-semibold text-[var(--color-accent)]">
                         ₹{item.subtotal}
                       </td>
+                      {order.status === "PENDING" && (
+                        <td className="text-right">
+                          <button
+                            className="btn btn-ghost text-xs"
+                            onClick={() => handleRemoveItem(item.id)}
+                            style={{ color: "var(--color-danger)", padding: "4px 8px", minHeight: "auto" }}
+                            title="Remove item"
+                          >
+                            ✕
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

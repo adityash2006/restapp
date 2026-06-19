@@ -6,6 +6,7 @@ import {
   addItemsToOrder,
   updateOrderStatus,
   getTodaySummary,
+  removeOrderItem,
 } from "../services/order.service";
 
 const router = Router();
@@ -110,6 +111,27 @@ router.post("/:id/items", async (req, res) => {
   } catch (error: any) {
     console.error("Error adding items:", error);
     const message = error.message || "Failed to add items to order";
+    const status = message.includes("not found") || message.includes("not active") ? 400 : 500;
+    res.status(status).json({ error: message });
+  }
+});
+
+// DELETE /api/orders/:id/items/:itemId
+router.delete("/:id/items/:itemId", async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.id);
+    const itemId = parseInt(req.params.itemId);
+    
+    if (isNaN(orderId) || isNaN(itemId)) {
+      res.status(400).json({ error: "Invalid order ID or item ID" });
+      return;
+    }
+
+    const result = await removeOrderItem(orderId, itemId);
+    res.json(result);
+  } catch (error: any) {
+    console.error("Error removing item:", error);
+    const message = error.message || "Failed to remove item from order";
     const status = message.includes("not found") || message.includes("not active") ? 400 : 500;
     res.status(status).json({ error: message });
   }

@@ -104,6 +104,10 @@ export const addItemsToOrder = (orderId: number, items: { menuItemId: number; qu
     method: "POST",
     body: JSON.stringify({ items }),
   });
+export const removeOrderItem = (orderId: number, itemId: number) =>
+  fetchJSON<{ order: TableOrder }>(`/orders/${orderId}/items/${itemId}`, {
+    method: "DELETE",
+  });
 export const updateOrderStatus = (id: number, status: "PENDING" | "DONE") =>
   fetchJSON<TableOrder>(`/orders/${id}/status`, {
     method: "PATCH",
