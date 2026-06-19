@@ -9,4 +9,5 @@ export default [
   route("inventory", "routes/inventory.tsx"),
   route("menu-manage", "routes/menu-manage.tsx"),
   route("recipes", "routes/recipes.tsx"),
+  route("detailed-summary", "routes/detailed-summary.tsx"),
 ] satisfies RouteConfig;

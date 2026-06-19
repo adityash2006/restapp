@@ -138,7 +138,8 @@ export default function InventoryPage() {
           </div>
           <div className="flex items-center gap-2">
             <Link to="/live-tables" className="nav-link no-underline">🖥️ Live</Link>
-            <Link to="/summary" className="nav-link no-underline">📊 Summary</Link>
+            <Link to="/summary" className="nav-link no-underline">📊 Today</Link>
+            <Link to="/detailed-summary" className="nav-link no-underline">📋 All Orders</Link>
             <Link to="/menu-manage" className="nav-link no-underline">🍽️ Menu</Link>
             <Link to="/recipes" className="nav-link no-underline">🧪 Recipes</Link>
           </div>

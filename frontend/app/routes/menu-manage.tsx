@@ -107,6 +107,8 @@ export default function MenuManagePage() {
             <h1 className="text-lg font-bold">🍽️ Menu Management</h1>
           </div>
           <div className="flex items-center gap-2">
+            <Link to="/summary" className="nav-link no-underline">📊 Today</Link>
+            <Link to="/detailed-summary" className="nav-link no-underline">📋 All Orders</Link>
             <Link to="/inventory" className="nav-link no-underline">📦 Inventory</Link>
             <Link to="/recipes" className="nav-link no-underline">🧪 Recipes</Link>
           </div>

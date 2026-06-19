@@ -114,6 +114,7 @@ export const updateOrderStatus = (id: number, status: "PENDING" | "DONE") =>
     body: JSON.stringify({ status }),
   });
 export const getTodaySummary = () => fetchJSON<TodaySummary>("/orders/summary/today");
+export const getDetailedSummary = () => fetchJSON<TodaySummary>("/orders/summary/detailed");
 
 // Inventory
 export const getInventory = () => fetchJSON<Ingredient[]>("/inventory");

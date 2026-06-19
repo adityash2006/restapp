@@ -47,7 +47,10 @@ export default function LiveTablesPage() {
           </div>
           <div className="flex items-center gap-2">
             <Link to="/summary" className="nav-link no-underline" id="nav-summary">
-              📊 Summary
+              📊 Today
+            </Link>
+            <Link to="/detailed-summary" className="nav-link no-underline" id="nav-detailed-summary">
+              📋 All Orders
             </Link>
             <Link to="/inventory" className="nav-link no-underline" id="nav-inventory">
               📦 Inventory

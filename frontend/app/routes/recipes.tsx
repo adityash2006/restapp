@@ -217,6 +217,8 @@ export default function RecipesPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Link to="/summary" className="nav-link no-underline">📊 Today</Link>
+            <Link to="/detailed-summary" className="nav-link no-underline">📋 All Orders</Link>
             <Link to="/menu-manage" className="nav-link no-underline">🍽️ Menu</Link>
             <Link to="/inventory" className="nav-link no-underline">📦 Inventory</Link>
           </div>
