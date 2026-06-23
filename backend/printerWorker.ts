@@ -37,19 +37,36 @@ interface PrintData {
 }
 
 // ── Raw Windows printing helper ─────────────────────────────────
-// Sends raw ESC/POS bytes straight to a shared Windows printer queue,
-// bypassing any native node addon (avoids the driver/ABI issues we hit before).
+// Sends raw ESC/POS bytes straight to a shared Windows printer queue.
 
 async function sendRawToWindowsPrinter(shareName: string, buffer: Buffer): Promise<void> {
   const tempFile = path.join(
     os.tmpdir(),
     `kesari_print_${Date.now()}_${Math.random().toString(36).slice(2)}.prn`
   );
-  fs.writeFileSync(tempFile, buffer);
+
   try {
-    await execFileAsync("cmd.exe", ["/c", "copy", "/b", tempFile, `\\\\localhost\\${shareName}`]);
+    fs.writeFileSync(tempFile, buffer);
+  } catch (writeErr: any) {
+    throw new Error(`Failed to write temp file: ${writeErr.message}`);
+  }
+
+  try {
+    const uncPath = `\\\\localhost\\${shareName}`;
+    const { stdout, stderr } = await execFileAsync("cmd.exe", ["/c", "copy", "/b", tempFile, uncPath]);
+    if (stderr && stderr.trim()) {
+      console.warn(`  [PRINT WARN] copy /b stderr: ${stderr.trim()}`);
+    }
+  } catch (copyErr: any) {
+    // Extract useful info from the error
+    const stderr = copyErr.stderr || "";
+    const code = copyErr.code || "unknown";
+    throw new Error(
+      `copy /b failed (code=${code}): ${copyErr.message}${stderr ? ` | stderr: ${stderr}` : ""}`
+    );
   } finally {
-    fs.unlink(tempFile, () => {});
+    // Always clean up temp file
+    try { fs.unlinkSync(tempFile); } catch (_) { }
   }
 }
 
@@ -70,6 +87,9 @@ function createPrinter(config: typeof printerConfig.counter): ThermalPrinter {
 async function sendPrint(printer: ThermalPrinter, config: typeof printerConfig.counter): Promise<void> {
   if (config.mode === "windows-shared") {
     const buffer = printer.getBuffer();
+    if (!buffer || buffer.length === 0) {
+      throw new Error("Printer buffer is empty — nothing to print");
+    }
     await sendRawToWindowsPrinter(config.interface, buffer);
   } else {
     const isConnected = await printer.isPrinterConnected();
@@ -85,7 +105,6 @@ async function sendPrint(printer: ThermalPrinter, config: typeof printerConfig.c
 async function printKOT(data: PrintData): Promise<void> {
   const printer = createPrinter(printerConfig.kitchen);
 
-  printer.alignCenter();
   printer.alignCenter();
   printer.bold(true);
   printer.setTextSize(1, 1);
@@ -132,7 +151,6 @@ async function printCounterSlip(data: PrintData): Promise<void> {
   const printer = createPrinter(printerConfig.counter);
 
   printer.alignCenter();
-  printer.alignCenter();
   printer.bold(true);
   if (data.isCancelled) {
     printer.println("CANCEL SLIP");
@@ -176,7 +194,6 @@ async function printFinalBill(data: PrintData): Promise<void> {
   printer.println(restaurantInfo.name);
   printer.bold(false);
   printer.setTextNormal();
-  // if (restaurantInfo.tagline) printer.println(restaurantInfo.tagline);
   printer.drawLine();
 
   printer.alignCenter();
@@ -221,13 +238,70 @@ async function printFinalBill(data: PrintData): Promise<void> {
 
   printer.alignCenter();
   printer.println("Thank you! Visit again.");
-  
+
   printer.newLine();
   printer.cut();
 
   await sendPrint(printer, printerConfig.counter);
 
   console.log(`  [FINAL BILL] Table ${data.tableNumber}: Rs.${data.totalAmount}`);
+}
+
+// ── Process a single print job ─────────────────────────────────
+
+async function processJob(job: any): Promise<void> {
+  const data = job.data as any as PrintData | null;
+
+  if (!data) {
+    console.warn(`  Job #${job.id} has no data, skipping`);
+    await prisma.printJob.update({
+      where: { id: job.id },
+      data: { status: "FAILED", processedAt: new Date() },
+    });
+    return;
+  }
+
+  // Determine which printer this job targets
+  const isKitchenJob = job.type === "KOT";
+  const printerCfg = isKitchenJob ? printerConfig.kitchen : printerConfig.counter;
+
+  // Skip if the target printer is disabled
+  if (!printerCfg.enabled) {
+    console.log(`  Job #${job.id} (${job.type}) skipped — ${isKitchenJob ? "kitchen" : "counter"} printer disabled`);
+    await prisma.printJob.update({
+      where: { id: job.id },
+      data: { status: "COMPLETED", processedAt: new Date() },
+    });
+    return;
+  }
+
+  // Print based on job type
+  if (isKitchenJob) {
+    await printKOT(data);
+  } else {
+    // BILL type — final bill (has totalAmount) or counter slip
+    if (data.totalAmount !== undefined) {
+      await printFinalBill(data);
+    } else {
+      await printCounterSlip(data);
+    }
+  }
+
+  // Mark as completed ONLY after successful print
+  await prisma.printJob.update({
+    where: { id: job.id },
+    data: {
+      status: "COMPLETED",
+      processedAt: new Date(),
+    },
+  });
+
+  const label = isKitchenJob
+    ? (data.isCancelled ? "CANCEL KOT" : "KOT")
+    : data.totalAmount !== undefined
+      ? "FINAL BILL"
+      : (data.isCancelled ? "CANCEL SLIP" : "COUNTER SLIP");
+  console.log(`  Job #${job.id} (${label}) completed`);
 }
 
 // ── Poll & Process ─────────────────────────────────────────────
@@ -246,59 +320,36 @@ async function pollPrintJobs() {
 
     if (pendingJobs.length === 0) return;
 
-    console.log(`\n🖨️  Processing ${pendingJobs.length} print job(s)...`);
+    console.log(`\n  Processing ${pendingJobs.length} print job(s)...`);
 
-    for (const job of pendingJobs) {
+    // Process counter (BILL) jobs first, then kitchen (KOT) jobs.
+    // This ensures the counter always prints even if kitchen is down.
+    const counterJobs = pendingJobs.filter(j => j.type === "BILL");
+    const kitchenJobs = pendingJobs.filter(j => j.type === "KOT");
+    const orderedJobs = [...counterJobs, ...kitchenJobs];
+
+    for (const job of orderedJobs) {
       try {
-        const data = job.data as any as PrintData | null;
+        await processJob(job);
+      } catch (error: any) {
+        console.error(`  Job #${job.id} failed: ${error.message}`);
 
-        if (!data) {
-          console.warn(`  ⚠️  Job #${job.id} has no data, skipping`);
+        // Mark as FAILED so it doesn't retry endlessly
+        try {
           await prisma.printJob.update({
             where: { id: job.id },
-            data: { status: "FAILED", processedAt: new Date() },
+            data: {
+              status: "FAILED",
+              processedAt: new Date(),
+            },
           });
-          continue;
+        } catch (dbErr: any) {
+          console.error(`  Could not mark job #${job.id} as FAILED in DB: ${dbErr.message}`);
         }
-
-        if (job.type === "KOT") {
-          await printKOT(data);
-        } else if (job.type === "BILL") {
-          if (data.totalAmount !== undefined) {
-            await printFinalBill(data);
-          } else {
-            await printCounterSlip(data);
-          }
-        }
-
-        await prisma.printJob.update({
-          where: { id: job.id },
-          data: {
-            status: "COMPLETED",
-            processedAt: new Date(),
-          },
-        });
-
-        const label = job.type === "KOT" 
-          ? (data.isCancelled ? "CANCEL KOT" : "KOT")
-          : data.totalAmount !== undefined 
-            ? "FINAL BILL"
-            : (data.isCancelled ? "CANCEL SLIP" : "COUNTER SLIP");
-        console.log(`  ✅ Job #${job.id} (${label}) completed`);
-      } catch (error: any) {
-        console.error(`  ❌ Job #${job.id} failed: ${error.message}`);
-
-        await prisma.printJob.update({
-          where: { id: job.id },
-          data: {
-            status: "FAILED",
-            processedAt: new Date(),
-          },
-        });
       }
     }
-  } catch (error) {
-    console.error("Error polling print jobs:", error);
+  } catch (error: any) {
+    console.error("Error polling print jobs:", error.message);
   } finally {
     isPolling = false;
   }
@@ -307,11 +358,11 @@ async function pollPrintJobs() {
 // ── Main ───────────────────────────────────────────────────────
 
 async function main() {
-  console.log("╔══════════════════════════════════════╗");
-  console.log("║   🖨️  Kesari Printer Worker           ║");
-  console.log("╚══════════════════════════════════════╝");
-  console.log(`  Kitchen: ${printerConfig.kitchen.interface}`);
-  console.log(`  Counter: ${printerConfig.counter.interface}`);
+  console.log("========================================");
+  console.log("  Kesari Printer Worker");
+  console.log("========================================");
+  console.log(`  Counter: ${printerConfig.counter.interface} [${printerConfig.counter.enabled ? "ON" : "OFF"}]`);
+  console.log(`  Kitchen: ${printerConfig.kitchen.interface} [${printerConfig.kitchen.enabled ? "ON" : "OFF"}]`);
   console.log(`  Polling every ${POLL_INTERVAL / 1000}s...\n`);
 
   setInterval(pollPrintJobs, POLL_INTERVAL);
