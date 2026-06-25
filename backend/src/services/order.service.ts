@@ -175,7 +175,8 @@ export async function addItemsToOrder(
   );
 
   // Execute all writes atomically
-  await prisma.$transaction(operations);
+  // Timeout increased for Neon cloud DB latency with many items
+  await prisma.$transaction(operations, { timeout: 30000 });
 
   // Return updated order
   const updatedOrder = await prisma.tableOrder.findUnique({
@@ -397,7 +398,8 @@ export async function removeOrderItem(orderId: number, orderItemId: number) {
   );
 
   // Execute all writes atomically
-  await prisma.$transaction(operations);
+  // Timeout increased for Neon cloud DB latency
+  await prisma.$transaction(operations, { timeout: 30000 });
 
   // Return updated order
   const updatedOrder = await prisma.tableOrder.findUnique({
