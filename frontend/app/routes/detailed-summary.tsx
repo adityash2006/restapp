@@ -7,16 +7,20 @@ export default function DetailedSummaryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Input values shown in the date fields
-  const [startDate, setStartDate] = useState<string>(() => {
+  const getCurrentMonthRange = () => {
     const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-  });
-  const [endDate, setEndDate] = useState<string>(() => {
-    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
     const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    return `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
-  });
+
+    return {
+      start: `${firstDay.getFullYear()}-${String(firstDay.getMonth() + 1).padStart(2, '0')}-01`,
+      end: `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`,
+    };
+  };
+
+  // Input values shown in the date fields
+  const [startDate, setStartDate] = useState<string>(() => getCurrentMonthRange().start);
+  const [endDate, setEndDate] = useState<string>(() => getCurrentMonthRange().end);
 
   const fetchSummary = useCallback(async (startDateValue?: string, endDateValue?: string) => {
     try {
@@ -32,7 +36,8 @@ export default function DetailedSummaryPage() {
   }, []);
 
   useEffect(() => {
-    fetchSummary(startDate, endDate);
+    const currentMonth = getCurrentMonthRange();
+    fetchSummary(currentMonth.start, currentMonth.end);
   }, [fetchSummary]);
 
   const applyFilters = () => {
@@ -40,9 +45,10 @@ export default function DetailedSummaryPage() {
   };
 
   const clearFilters = () => {
-    setStartDate("");
-    setEndDate("");
-    fetchSummary(undefined, undefined);
+    const currentMonth = getCurrentMonthRange();
+    setStartDate(currentMonth.start);
+    setEndDate(currentMonth.end);
+    fetchSummary(currentMonth.start, currentMonth.end);
   };
 
   return (
