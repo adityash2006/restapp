@@ -7,10 +7,22 @@ export default function DetailedSummaryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchSummary = useCallback(async () => {
+  // Input values shown in the date fields
+  const [startDate, setStartDate] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+  });
+  const [endDate, setEndDate] = useState<string>(() => {
+    const now = new Date();
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
+  });
+
+  const fetchSummary = useCallback(async (startDateValue?: string, endDateValue?: string) => {
     try {
+      setLoading(true);
       setError(null);
-      const data = await getDetailedSummary();
+      const data = await getDetailedSummary(startDateValue, endDateValue);
       setSummary(data);
     } catch (err: any) {
       setError(err.message || "Failed to load detailed summary");
@@ -20,8 +32,18 @@ export default function DetailedSummaryPage() {
   }, []);
 
   useEffect(() => {
-    fetchSummary();
+    fetchSummary(startDate, endDate);
   }, [fetchSummary]);
+
+  const applyFilters = () => {
+    fetchSummary(startDate || undefined, endDate || undefined);
+  };
+
+  const clearFilters = () => {
+    setStartDate("");
+    setEndDate("");
+    fetchSummary(undefined, undefined);
+  };
 
   return (
     <div className="min-h-screen">
@@ -47,7 +69,11 @@ export default function DetailedSummaryPage() {
             <Link to="/menu-manage" className="nav-link no-underline" id="nav-menu">
               🍽️ Menu
             </Link>
-            <button onClick={fetchSummary} className="btn btn-ghost text-sm" id="refresh-summary">
+            <button
+              onClick={() => fetchSummary(startDate || undefined, endDate || undefined)}
+              className="btn btn-ghost text-sm"
+              id="refresh-summary"
+            >
               🔄 Refresh
             </button>
           </div>
@@ -55,6 +81,41 @@ export default function DetailedSummaryPage() {
       </div>
 
       <div className="max-w-5xl mx-auto p-4 pb-20">
+        
+        {/* Filters */}
+        <div className="card mb-6 flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-semibold text-[var(--color-text-secondary)]">From:</label>
+            <input 
+              type="date" 
+              className="input" 
+              value={startDate} 
+              onChange={(e) => setStartDate(e.target.value)} 
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-semibold text-[var(--color-text-secondary)]">To:</label>
+            <input 
+              type="date" 
+              className="input" 
+              value={endDate} 
+              onChange={(e) => setEndDate(e.target.value)} 
+            />
+          </div>
+          <button 
+            className="btn btn-primary text-sm"
+            onClick={applyFilters}
+          >
+            Apply Filters
+          </button>
+          <button 
+            className="btn btn-secondary text-sm"
+            onClick={clearFilters}
+          >
+            Clear Filters
+          </button>
+        </div>
+
         {loading ? (
           <div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
@@ -68,31 +129,40 @@ export default function DetailedSummaryPage() {
           <div className="empty-state mt-12">
             <div className="empty-state-icon">⚠️</div>
             <p className="text-lg font-semibold text-[var(--color-danger)]">{error}</p>
-            <button onClick={fetchSummary} className="btn btn-primary mt-4">
+            <button
+              onClick={() => fetchSummary(startDate || undefined, endDate || undefined)}
+              className="btn btn-primary mt-4"
+            >
               Retry
             </button>
           </div>
         ) : summary ? (
           <div className="animate-fade-in">
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
               <div className="stat-card">
                 <div className="stat-value text-[var(--color-success)]">
                   ₹{summary.totalRevenue.toLocaleString()}
                 </div>
-                <div className="stat-label">Lifetime Revenue</div>
+                <div className="stat-label">Total Revenue</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value text-[var(--color-success)]">
+                  ₹{(summary.cashRevenue || 0).toLocaleString()}
+                </div>
+                <div className="stat-label">Cash Revenue</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value text-[var(--color-accent)]">
+                  ₹{(summary.onlineRevenue || 0).toLocaleString()}
+                </div>
+                <div className="stat-label">Online Revenue</div>
               </div>
               <div className="stat-card">
                 <div className="stat-value text-[var(--color-accent)]">
                   {summary.orderCount}
                 </div>
                 <div className="stat-label">Total Orders</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-value">
-                  ₹{Math.round(summary.averageOrderValue)}
-                </div>
-                <div className="stat-label">Avg Order Value</div>
               </div>
             </div>
 

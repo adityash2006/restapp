@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router";
-import { getTodaySummary, type TodaySummary } from "~/lib/api";
+import { getTodaySummary, updateOrderPaymentMethod, type TodaySummary } from "~/lib/api";
 
 export default function SummaryPage() {
   const [summary, setSummary] = useState<TodaySummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [updatingPaymentIds, setUpdatingPaymentIds] = useState<number[]>([]);
+  const [pendingPaymentValues, setPendingPaymentValues] = useState<Record<number, "" | "CASH" | "ONLINE">>({});
 
   const fetchSummary = useCallback(async () => {
     try {
@@ -22,6 +24,25 @@ export default function SummaryPage() {
   useEffect(() => {
     fetchSummary();
   }, [fetchSummary]);
+
+  const handlePaymentMethodChange = async (orderId: number, method: "" | "CASH" | "ONLINE") => {
+    setPendingPaymentValues((prev) => ({ ...prev, [orderId]: method }));
+    setUpdatingPaymentIds((prev) => (prev.includes(orderId) ? prev : [...prev, orderId]));
+
+    try {
+      await updateOrderPaymentMethod(orderId, method === "" ? null : method);
+      await fetchSummary(); // Refresh to update revenue stats
+    } catch (err: any) {
+      setError("Failed to update payment method: " + (err.message || "Unknown error"));
+    } finally {
+      setUpdatingPaymentIds((prev) => prev.filter((id) => id !== orderId));
+      setPendingPaymentValues((prev) => {
+        const next = { ...prev };
+        delete next[orderId];
+        return next;
+      });
+    }
+  };
 
   return (
     <div className="min-h-screen">
@@ -75,7 +96,7 @@ export default function SummaryPage() {
         ) : summary ? (
           <div className="animate-fade-in">
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
               <div className="stat-card">
                 <div className="stat-value text-[var(--color-success)]">
                   ₹{summary.totalRevenue.toLocaleString()}
@@ -83,16 +104,22 @@ export default function SummaryPage() {
                 <div className="stat-label">Total Revenue</div>
               </div>
               <div className="stat-card">
+                <div className="stat-value text-[var(--color-success)]">
+                  ₹{(summary.cashRevenue || 0).toLocaleString()}
+                </div>
+                <div className="stat-label">Cash Revenue</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value text-[var(--color-accent)]">
+                  ₹{(summary.onlineRevenue || 0).toLocaleString()}
+                </div>
+                <div className="stat-label">Online Revenue</div>
+              </div>
+              <div className="stat-card">
                 <div className="stat-value text-[var(--color-accent)]">
                   {summary.orderCount}
                 </div>
                 <div className="stat-label">Completed Orders</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-value">
-                  ₹{Math.round(summary.averageOrderValue)}
-                </div>
-                <div className="stat-label">Avg Order Value</div>
               </div>
             </div>
 
@@ -101,11 +128,11 @@ export default function SummaryPage() {
               <div className="p-4 border-b border-[var(--color-border)]">
                 <h2 className="font-bold text-lg">Completed Orders</h2>
                 <p className="text-sm text-[var(--color-text-muted)]">
-                  {new Date().toLocaleDateString("en-IN", { 
-                    weekday: "long", 
-                    year: "numeric", 
-                    month: "long", 
-                    day: "numeric" 
+                  {new Date().toLocaleDateString("en-IN", {
+                    weekday: "long",
+                    year: "numeric",
+                    month: "long",
+                    day: "numeric"
                   })}
                 </p>
               </div>
@@ -122,6 +149,7 @@ export default function SummaryPage() {
                       <th>Table</th>
                       <th>Items</th>
                       <th>Time</th>
+                      <th>Payment</th>
                       <th className="text-right">Total</th>
                     </tr>
                   </thead>
@@ -144,6 +172,23 @@ export default function SummaryPage() {
                         </td>
                         <td className="text-[var(--color-text-muted)]">
                           {new Date(order.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </td>
+                        <td>
+                          {updatingPaymentIds.includes(order.id) && (
+                            <div className="text-xs text-[var(--color-text-muted)] mb-1">Saving...</div>
+                          )}
+                          <select
+                            className="input text-sm pl-2 pr-8 py-1"
+                            value={pendingPaymentValues[order.id] ?? (order.paymentMethod ?? "")}
+                            onChange={(e) =>
+                              handlePaymentMethodChange(order.id, e.target.value as "" | "CASH" | "ONLINE")
+                            }
+                            disabled={updatingPaymentIds.includes(order.id)}
+                          >
+                            <option value="">Choose</option>
+                            <option value="CASH">Cash</option>
+                            <option value="ONLINE">Online</option>
+                          </select>
                         </td>
                         <td className="text-right font-bold text-[var(--color-success)]">
                           ₹{order.totalAmount}

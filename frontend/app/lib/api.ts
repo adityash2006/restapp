@@ -44,6 +44,8 @@ export interface TableOrder {
   tableNumber: number;
   status: "PENDING" | "DONE";
   totalAmount: number;
+  discount: number;
+  paymentMethod: "CASH" | "ONLINE" | null;
   createdAt: string;
   updatedAt: string;
   items: OrderItem[];
@@ -58,6 +60,8 @@ export interface Ingredient {
 
 export interface TodaySummary {
   totalRevenue: number;
+  cashRevenue?: number;
+  onlineRevenue?: number;
   orderCount: number;
   averageOrderValue: number;
   orders: TableOrder[];
@@ -108,13 +112,24 @@ export const removeOrderItem = (orderId: number, itemId: number) =>
   fetchJSON<{ order: TableOrder }>(`/orders/${orderId}/items/${itemId}`, {
     method: "DELETE",
   });
-export const updateOrderStatus = (id: number, status: "PENDING" | "DONE") =>
+export const updateOrderStatus = (id: number, status: "PENDING" | "DONE", discount?: number) =>
   fetchJSON<TableOrder>(`/orders/${id}/status`, {
     method: "PATCH",
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, discount }),
+  });
+export const updateOrderPaymentMethod = (id: number, paymentMethod: "CASH" | "ONLINE" | null) =>
+  fetchJSON<TableOrder>(`/orders/${id}/payment`, {
+    method: "PATCH",
+    body: JSON.stringify({ paymentMethod }),
   });
 export const getTodaySummary = () => fetchJSON<TodaySummary>("/orders/summary/today");
-export const getDetailedSummary = () => fetchJSON<TodaySummary>("/orders/summary/detailed");
+export const getDetailedSummary = (startDate?: string, endDate?: string) => {
+  const params = new URLSearchParams();
+  if (startDate) params.append("startDate", startDate);
+  if (endDate) params.append("endDate", endDate);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return fetchJSON<TodaySummary>(`/orders/summary/detailed${query}`);
+};
 
 // Inventory
 export const getInventory = () => fetchJSON<Ingredient[]>("/inventory");

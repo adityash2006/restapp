@@ -191,7 +191,7 @@ export async function addItemsToOrder(
   return { order: updatedOrder };
 }
 
-export async function updateOrderStatus(id: number, status: OrderStatus) {
+export async function updateOrderStatus(id: number, status: OrderStatus, discountPercentage?: number) {
   // Fetch full order before updating (for BILL snapshot)
   const order = await prisma.tableOrder.findUnique({
     where: { id },
@@ -204,10 +204,22 @@ export async function updateOrderStatus(id: number, status: OrderStatus) {
 
   if (!order) throw new Error("Order not found");
 
-  // Update the status
+  let totalAmount = order.totalAmount;
+  let discount = 0;
+  
+  if (status === "DONE" && discountPercentage !== undefined && discountPercentage >= 0 && discountPercentage <= 40) {
+    discount = (totalAmount * discountPercentage) / 100;
+    totalAmount = totalAmount - discount;
+  }
+
+  // Update the status and totalAmount with discount
   const updatedOrder = await prisma.tableOrder.update({
     where: { id },
-    data: { status },
+    data: { 
+      status,
+      totalAmount,
+      discount,
+    },
     include: {
       items: {
         include: { menuItem: true },
@@ -218,14 +230,16 @@ export async function updateOrderStatus(id: number, status: OrderStatus) {
   // If marking as DONE, create a final BILL with all items + total
   if (status === "DONE") {
     const billData = {
-      tableNumber: order.tableNumber,
-      items: order.items.map((item) => ({
+      tableNumber: updatedOrder.tableNumber,
+      items: updatedOrder.items.map((item) => ({
         name: item.menuItem.name,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         subtotal: item.subtotal,
       })),
-      totalAmount: order.totalAmount,
+      totalAmount: updatedOrder.totalAmount,
+      discountAmount: discount,
+      discountPercentage: discountPercentage || 0,
     };
 
     await prisma.printJob.create({
@@ -239,6 +253,23 @@ export async function updateOrderStatus(id: number, status: OrderStatus) {
   }
 
   return updatedOrder;
+}
+
+export async function updateOrderPaymentMethod(id: number, paymentMethod: "CASH" | "ONLINE" | null) {
+  if (paymentMethod !== null && !["CASH", "ONLINE"].includes(paymentMethod)) {
+    throw new Error("Invalid payment method. Use null, CASH, or ONLINE");
+  }
+
+  const existingOrder = await prisma.tableOrder.findUnique({ where: { id } });
+  if (!existingOrder) {
+    throw new Error("Order not found");
+  }
+
+  const order = await prisma.tableOrder.update({
+    where: { id },
+    data: { paymentMethod },
+  });
+  return order;
 }
 
 export async function getTodaySummary() {
@@ -267,20 +298,34 @@ export async function getTodaySummary() {
   const totalRevenue = completedOrders.reduce((sum, o) => sum + o.totalAmount, 0);
   const orderCount = completedOrders.length;
   const averageOrderValue = orderCount > 0 ? totalRevenue / orderCount : 0;
+  const cashRevenue = completedOrders
+    .filter((o) => o.paymentMethod === "CASH")
+    .reduce((sum, o) => sum + o.totalAmount, 0);
+  const onlineRevenue = completedOrders
+    .filter((o) => o.paymentMethod === "ONLINE")
+    .reduce((sum, o) => sum + o.totalAmount, 0);
 
   return {
     totalRevenue,
+    cashRevenue,
+    onlineRevenue,
     orderCount,
     averageOrderValue,
     orders: completedOrders,
   };
 }
 
-export async function getDetailedSummary() {
+export async function getDetailedSummary(startDate?: Date, endDate?: Date) {
+  const whereClause: any = { status: "DONE" };
+  
+  if (startDate || endDate) {
+    whereClause.updatedAt = {};
+    if (startDate) whereClause.updatedAt.gte = startDate;
+    if (endDate) whereClause.updatedAt.lte = endDate;
+  }
+
   const completedOrders = await prisma.tableOrder.findMany({
-    where: {
-      status: "DONE",
-    },
+    where: whereClause,
     include: {
       items: {
         include: { menuItem: true },
@@ -292,9 +337,14 @@ export async function getDetailedSummary() {
   const totalRevenue = completedOrders.reduce((sum, o) => sum + o.totalAmount, 0);
   const orderCount = completedOrders.length;
   const averageOrderValue = orderCount > 0 ? totalRevenue / orderCount : 0;
+  
+  const cashRevenue = completedOrders.filter(o => o.paymentMethod === "CASH").reduce((sum, o) => sum + o.totalAmount, 0);
+  const onlineRevenue = completedOrders.filter(o => o.paymentMethod === "ONLINE").reduce((sum, o) => sum + o.totalAmount, 0);
 
   return {
     totalRevenue,
+    cashRevenue,
+    onlineRevenue,
     orderCount,
     averageOrderValue,
     orders: completedOrders,

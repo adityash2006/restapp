@@ -33,6 +33,8 @@ interface PrintData {
   tableNumber: number;
   items: SlipItem[];
   totalAmount?: number; // Only present in final BILL
+  discountAmount?: number;
+  discountPercentage?: number;
   isCancelled?: boolean; // True if this is a cancellation slip
 }
 
@@ -227,6 +229,12 @@ async function printFinalBill(data: PrintData): Promise<void> {
   }
 
   printer.drawLine();
+
+  if (data.discountAmount && data.discountAmount > 0) {
+    printer.alignRight();
+    printer.println(`Discount (${data.discountPercentage}%): -Rs.${data.discountAmount.toFixed(2)}`);
+    printer.drawLine();
+  }
 
   printer.alignCenter();
   printer.bold(true);

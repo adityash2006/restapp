@@ -38,6 +38,7 @@ export default function WaiterTablePage() {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [markingDone, setMarkingDone] = useState(false);
+  const [discount, setDiscount] = useState<number | "">("");
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
   // Cart state
@@ -152,7 +153,8 @@ export default function WaiterTablePage() {
   const handleMarkDone = async () => {
     setMarkingDone(true);
     try {
-      await updateOrderStatus(orderId, "DONE");
+      const discountVal = discount === "" ? 0 : Number(discount);
+      await updateOrderStatus(orderId, "DONE", discountVal);
       setToast({ message: "Table marked as done!", type: "success" });
       setTimeout(() => navigate("/waiter"), 500);
     } catch (err: any) {
@@ -292,22 +294,49 @@ export default function WaiterTablePage() {
         {/* Action Buttons */}
         {order.status === "PENDING" && (
           <div className="fixed bottom-0 left-0 right-0 p-4 bg-[var(--color-surface)] border-t border-[var(--color-border)]">
-            <div className="max-w-2xl mx-auto flex gap-3">
-              <button
-                className="btn btn-primary flex-1 btn-lg"
-                onClick={() => setShowAddItem(true)}
-                id="add-item-btn"
-              >
-                + Add Items
-              </button>
-              <button
-                className="btn btn-success btn-lg"
-                onClick={handleMarkDone}
-                disabled={markingDone || order.items.length === 0}
-                id="mark-done-btn"
-              >
-                {markingDone ? <span className="spinner" /> : "✓ Done"}
-              </button>
+            <div className="max-w-2xl mx-auto flex flex-col gap-3">
+              <div className="flex items-center gap-3 w-full">
+                <label className="text-sm font-semibold text-[var(--color-text-secondary)] whitespace-nowrap">
+                  Discount (%)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="40"
+                  className="input flex-1"
+                  placeholder="0-40%"
+                  value={discount}
+                  onChange={(e) => {
+                    let val = e.target.value;
+                    if (val === "") {
+                      setDiscount("");
+                    } else {
+                      const num = parseInt(val);
+                      if (!isNaN(num) && num >= 0 && num <= 40) {
+                        setDiscount(num);
+                      }
+                    }
+                  }}
+                  id="discount-input"
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  className="btn btn-primary flex-1 btn-lg"
+                  onClick={() => setShowAddItem(true)}
+                  id="add-item-btn"
+                >
+                  + Add Items
+                </button>
+                <button
+                  className="btn btn-success flex-1 btn-lg"
+                  onClick={handleMarkDone}
+                  disabled={markingDone || order.items.length === 0}
+                  id="mark-done-btn"
+                >
+                  {markingDone ? <span className="spinner" /> : "✓ Done"}
+                </button>
+              </div>
             </div>
           </div>
         )}

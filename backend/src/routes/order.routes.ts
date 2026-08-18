@@ -8,6 +8,7 @@ import {
   getTodaySummary,
   getDetailedSummary,
   removeOrderItem,
+  updateOrderPaymentMethod,
 } from "../services/order.service";
 
 const router = Router();
@@ -35,9 +36,19 @@ router.get("/summary/today", async (_req, res) => {
 });
 
 // GET /api/orders/summary/detailed
-router.get("/summary/detailed", async (_req, res) => {
+router.get("/summary/detailed", async (req, res) => {
   try {
-    const summary = await getDetailedSummary();
+    const { startDate, endDate } = req.query;
+    let start: Date | undefined;
+    let end: Date | undefined;
+    
+    if (startDate) start = new Date(startDate as string);
+    if (endDate) {
+      end = new Date(endDate as string);
+      end.setHours(23, 59, 59, 999);
+    }
+    
+    const summary = await getDetailedSummary(start, end);
     res.json(summary);
   } catch (error) {
     console.error("Error fetching detailed summary:", error);
@@ -158,17 +169,42 @@ router.patch("/:id/status", async (req, res) => {
       return;
     }
 
-    const { status } = req.body;
+    const { status, discount } = req.body;
     if (!status || !["PENDING", "DONE"].includes(status)) {
       res.status(400).json({ error: "Status must be PENDING or DONE" });
       return;
     }
 
-    const order = await updateOrderStatus(id, status);
+    const order = await updateOrderStatus(id, status as any, discount);
     res.json(order);
   } catch (error) {
     console.error("Error updating order status:", error);
     res.status(500).json({ error: "Failed to update order status" });
+  }
+});
+
+// PATCH /api/orders/:id/payment
+router.patch("/:id/payment", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ error: "Invalid order ID" });
+      return;
+    }
+
+    const { paymentMethod } = req.body;
+    if (paymentMethod !== null && !["CASH", "ONLINE"].includes(paymentMethod)) {
+      res.status(400).json({ error: "paymentMethod must be null, CASH, or ONLINE" });
+      return;
+    }
+
+    const order = await updateOrderPaymentMethod(id, paymentMethod);
+    res.json(order);
+  } catch (error: any) {
+    console.error("Error updating payment method:", error);
+    const message = error.message || "Failed to update payment method";
+    const status = message.includes("not found") || message.includes("Invalid") ? 400 : 500;
+    res.status(status).json({ error: message });
   }
 });
 
